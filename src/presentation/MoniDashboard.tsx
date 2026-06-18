@@ -1268,10 +1268,10 @@ export const MoniDashboard: React.FC = () => {
         {/* Greeting Section */}
         <div style={{ textAlign: 'center', margin: '10px 0' }}>
           <h2 style={{ fontSize: '1.35rem', margin: '0 0 6px 0', fontWeight: '700', color: '#fff', letterSpacing: '-0.3px' }}>
-            Sayın Kullanıcı,
+            Merhaba, Ben Moni!
           </h2>
           <h3 style={{ fontSize: '1.2rem', margin: '0 0 10px 0', fontWeight: '600', color: '#ffd700' }}>
-            Gününüz için hazırız.
+            Gününüz için hazırım.
           </h3>
           <p style={{ fontSize: '0.82rem', color: 'var(--color-secondary)', margin: 0, padding: '0 10px' }}>
             {reminderText}
