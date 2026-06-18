@@ -263,6 +263,24 @@ export const MoniDashboard: React.FC = () => {
     }
   }, [isWakeWordListening]);
 
+  // Resilient wake word auto-restart loop for mobile browsers
+  useEffect(() => {
+    const checkInterval = setInterval(() => {
+      if (
+        isWakeWordListening &&
+        (window as any).moniAudioUnlocked &&
+        !isRecording &&
+        !isSpeakingRef.current &&
+        !isWakeRecognitionActiveRef.current
+      ) {
+        console.log("Moni Wake Word listener restart loop triggered.");
+        startWakeWordRecognition();
+      }
+    }, 4000); // check every 4 seconds
+
+    return () => clearInterval(checkInterval);
+  }, [isWakeWordListening, isRecording]);
+
   useEffect(() => {
     if (trVoicesList.length > 0) {
       addBridgeLog(`Sistem Türkçe Sesleri Yüklendi: ${trVoicesList.map(v => v.name).join(', ')}`);
