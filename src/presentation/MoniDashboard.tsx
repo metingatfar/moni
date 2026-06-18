@@ -482,7 +482,7 @@ export const MoniDashboard: React.FC = () => {
         }
         setTimeout(() => {
           startCommandListening();
-        }, 250);
+        }, 550);
       }
     };
 
