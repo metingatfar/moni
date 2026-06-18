@@ -435,7 +435,12 @@ export const MoniDashboard: React.FC = () => {
       }
     };
 
+    rec.onstart = () => {
+      isWakeRecognitionActiveRef.current = true;
+    };
+
     rec.onerror = (event: any) => {
+      isWakeRecognitionActiveRef.current = false;
       console.error('Wake Word recognition error:', event.error);
       if (event.error === 'not-allowed') {
         addBridgeLog("Mikrofon izni bekleniyor/engellendi. Lütfen tarayıcıda mikrofon iznini etkinleştirin.");
@@ -443,9 +448,11 @@ export const MoniDashboard: React.FC = () => {
     };
 
     rec.onend = () => {
+      isWakeRecognitionActiveRef.current = false;
       if (isWakeWordListening && !isSpeakingRef.current && !isRecording) {
         try {
           rec.start();
+          isWakeRecognitionActiveRef.current = true;
         } catch (e) {}
       }
     };
@@ -453,8 +460,10 @@ export const MoniDashboard: React.FC = () => {
     wakeRecognitionRef.current = rec;
     try {
       rec.start();
+      isWakeRecognitionActiveRef.current = true;
       addBridgeLog("Moni dinleme modu aktif. 'Moni' diyerek seslenebilirsiniz.");
     } catch (e) {
+      isWakeRecognitionActiveRef.current = false;
       console.error('Failed to start wake word:', e);
     }
   };
