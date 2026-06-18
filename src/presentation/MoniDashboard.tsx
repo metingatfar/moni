@@ -2525,35 +2525,9 @@ export const MoniDashboard: React.FC = () => {
   };
 
   return (
-    <div onClick={handlePageClick} style={{
-      minHeight: '100vh',
-      backgroundColor: '#07080d',
-      backgroundImage: 'radial-gradient(circle at 50% 30%, rgba(157, 78, 221, 0.08), transparent 70%), radial-gradient(circle at 80% 80%, rgba(0, 240, 255, 0.05), transparent 50%)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '20px',
-      fontFamily: 'var(--font-sans)',
-      boxSizing: 'border-box'
-    }}>
+    <div onClick={handlePageClick} className="dashboard-root">
       {/* Phone Mockup Wrapper Container */}
-      <div className="phone-container" style={{
-        width: '100%',
-        maxWidth: '430px',
-        height: '92vh',
-        minHeight: '760px',
-        maxHeight: '900px',
-        background: 'rgba(12, 14, 22, 0.8)',
-        backdropFilter: 'blur(30px)',
-        WebkitBackdropFilter: 'blur(30px)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        borderRadius: '40px',
-        boxShadow: '0 24px 64px rgba(0, 0, 0, 0.8), inset 0 0 1px 1px rgba(255, 255, 255, 0.15), 0 0 40px rgba(0, 240, 255, 0.05)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        position: 'relative'
-      }}>
+      <div className="phone-container">
         
         {/* Slide-out Sidebar Drawer */}
         <div style={{
