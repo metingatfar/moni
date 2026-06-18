@@ -217,6 +217,7 @@ export const MoniDashboard: React.FC = () => {
   
   const chatEndRef = useRef<HTMLDivElement>(null);
   const wakeRecognitionRef = useRef<any>(null);
+  const isWakeRecognitionActiveRef = useRef<boolean>(false);
   const isSpeakingRef = useRef<boolean>(false);
 
   // Initialize data
