@@ -168,3 +168,45 @@ code {
   border: 1px solid rgba(255, 255, 255, 0.05);
   color: var(--accent-cyan);
 }
+
+/* Moni Female Image Avatar Keyframe Animations */
+@keyframes avatar-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-4px) scale(1.02); }
+}
+
+@keyframes avatar-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.15) contrast(1.05); }
+}
+
+@keyframes avatar-speak {
+  0% { transform: scale(1.04); }
+  100% { transform: scale(1.07); }
+}
+
+@keyframes radar-ripple {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+
+@keyframes speak-wave-1 {
+  0% { transform: scaleY(0.2); }
+  100% { transform: scaleY(0.8); }
+}
+@keyframes speak-wave-2 {
+  0% { transform: scaleY(0.3); }
+  100% { transform: scaleY(1.0); }
+}
+@keyframes speak-wave-3 {
+  0% { transform: scaleY(0.1); }
+  100% { transform: scaleY(0.7); }
+}
+@keyframes speak-wave-4 {
+  0% { transform: scaleY(0.4); }
+  100% { transform: scaleY(0.9); }
+}
+@keyframes speak-wave-5 {
+  0% { transform: scaleY(0.2); }
+  100% { transform: scaleY(0.6); }
+}
