@@ -541,6 +541,9 @@ export const MoniDashboard: React.FC = () => {
     rec.onerror = (event: any) => {
       console.error('Command recognition error:', event.error);
       setIsRecording(false);
+      if (event.error === 'not-allowed') {
+        alert("Lütfen tarayıcınızın mikrofon iznine onay verin. Aksi takdirde sesinizi algılayamayacaktır.");
+      }
       if (isWakeWordListening) {
         startWakeWordRecognition();
       }
