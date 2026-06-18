@@ -177,7 +177,7 @@ export class VoiceService {
       const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=tr&client=tw-ob&q=${encodeURIComponent(chunk)}`;
       audio.src = url;
       
-      audio.play().catch(err => {
+      audio.play().catch((err: any) => {
         console.error("Google Translate TTS play error, falling back to local SpeechSynthesis:", err);
         this.speakWithLocalSpeechSynthesis(chunk, profile, () => {
           playNext();
@@ -189,7 +189,7 @@ export class VoiceService {
       playNext();
     };
 
-    audio.onerror = (e) => {
+    audio.onerror = (e: any) => {
       console.warn("Google Translate TTS error, attempting local SpeechSynthesis:", e);
       const currentChunk = chunks[currentChunkIndex - 1] || text;
       this.speakWithLocalSpeechSynthesis(currentChunk, profile, () => {
