@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { MoniAvatar } from './components/MoniAvatar';
 import { LocalAiService } from '../data/services/LocalAiService';
 import { NativeBridge } from '../data/services/NativeBridge';
 import { databaseService } from '../data/db/LocalDatabase';
@@ -16,6 +17,12 @@ export const MoniDashboard: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isOffline, setIsOffline] = useState(false);
+  const [avatarType, setAvatarType] = useState<'image' | 'svg'>(() => {
+    return (localStorage.getItem('moni_avatar_type') as 'image' | 'svg') || 'svg';
+  });
+  const [eyeColor, setEyeColor] = useState<string>(() => {
+    return localStorage.getItem('moni_eye_color') || 'blue';
+  });
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
@@ -1154,75 +1161,85 @@ export const MoniDashboard: React.FC = () => {
                 : '2px solid rgba(255, 255, 255, 0.15)',
             transition: 'all 0.4s ease'
           }}>
-            {/* The beautiful female avatar image */}
-            <img 
-              src="/avatar_woman.png" 
-              alt="Moni Avatar" 
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                transform: isMoniSpeaking ? 'scale(1.05)' : 'scale(1)',
-                animation: isRecording 
-                  ? 'avatar-pulse 1.5s infinite ease-in-out' 
-                  : isMoniSpeaking 
-                    ? 'avatar-speak 0.4s infinite alternate ease-in-out' 
-                    : 'avatar-float 6s infinite ease-in-out',
-                transition: 'transform 0.3s ease'
-              }}
-            />
+            {/* The avatar display */}
+            {avatarType === 'image' ? (
+              <img 
+                src="/avatar_woman.png" 
+                alt="Moni Avatar" 
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  transform: isMoniSpeaking ? 'scale(1.05)' : 'scale(1)',
+                  animation: isRecording 
+                    ? 'avatar-pulse 1.5s infinite ease-in-out' 
+                    : isMoniSpeaking 
+                      ? 'avatar-speak 0.4s infinite alternate ease-in-out' 
+                      : 'avatar-float 6s infinite ease-in-out',
+                  transition: 'transform 0.3s ease'
+                }}
+              />
+            ) : (
+              <MoniAvatar 
+                isSpeaking={isMoniSpeaking} 
+                isListening={isRecording} 
+                eyeColor={eyeColor}
+              />
+            )}
 
-            {/* Holographic Mouth Speaking Wave Overlay */}
-            <div style={{
-              position: 'absolute',
-              top: '68%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: '70px',
-              height: '24px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              pointerEvents: 'none'
-            }}>
-              {isMoniSpeaking ? (
-                <svg width="100%" height="100%" viewBox="0 0 70 24" style={{ filter: 'drop-shadow(0 0 5px var(--accent-cyan))' }}>
-                  <ellipse 
-                    cx="35" 
-                    cy="12" 
-                    rx="18" 
-                    ry="6" 
-                    fill="none" 
-                    stroke="var(--accent-cyan)" 
-                    strokeWidth="2.5"
-                    style={{
-                      transformOrigin: 'center',
-                      animation: 'mouth-scale 0.25s infinite ease-in-out'
-                    }}
-                  />
-                  <line 
-                    x1="15" 
-                    y1="12" 
-                    x2="55" 
-                    y2="12" 
-                    stroke="var(--accent-cyan)" 
-                    strokeWidth="2"
-                    style={{
-                      transformOrigin: 'center',
-                      animation: 'mouth-line-pulse 0.25s infinite ease-in-out'
-                    }}
-                  />
-                </svg>
-              ) : (
-                <div style={{
-                  width: '28px',
-                  height: '2px',
-                  backgroundColor: 'rgba(0, 240, 255, 0.7)',
-                  borderRadius: '2px',
-                  boxShadow: '0 0 6px var(--accent-cyan)'
-                }} />
-              )}
-            </div>
+            {/* Holographic Mouth Speaking Wave Overlay - Only for static image avatar */}
+            {avatarType === 'image' && (
+              <div style={{
+                position: 'absolute',
+                top: '68%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: '70px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none'
+              }}>
+                {isMoniSpeaking ? (
+                  <svg width="100%" height="100%" viewBox="0 0 70 24" style={{ filter: 'drop-shadow(0 0 5px var(--accent-cyan))' }}>
+                    <ellipse 
+                      cx="35" 
+                      cy="12" 
+                      rx="18" 
+                      ry="6" 
+                      fill="none" 
+                      stroke="var(--accent-cyan)" 
+                      strokeWidth="2.5"
+                      style={{
+                        transformOrigin: 'center',
+                        animation: 'mouth-scale 0.25s infinite ease-in-out'
+                      }}
+                    />
+                    <line 
+                      x1="15" 
+                      y1="12" 
+                      x2="55" 
+                      y2="12" 
+                      stroke="var(--accent-cyan)" 
+                      strokeWidth="2"
+                      style={{
+                        transformOrigin: 'center',
+                        animation: 'mouth-line-pulse 0.25s infinite ease-in-out'
+                      }}
+                    />
+                  </svg>
+                ) : (
+                  <div style={{
+                    width: '28px',
+                    height: '2px',
+                    backgroundColor: 'rgba(0, 240, 255, 0.7)',
+                    borderRadius: '2px',
+                    boxShadow: '0 0 6px var(--accent-cyan)'
+                  }} />
+                )}
+              </div>
+            )}
 
             {/* Speaking animated overlay waves */}
             {isMoniSpeaking && (
@@ -1268,6 +1285,111 @@ export const MoniDashboard: React.FC = () => {
                 pointerEvents: 'none'
               }} />
             )}
+          </div>
+        </div>
+
+        {/* Avatar Customization Bar */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+          background: 'rgba(255, 255, 255, 0.03)',
+          border: '1px solid rgba(255, 255, 255, 0.05)',
+          padding: '8px 16px',
+          borderRadius: '20px',
+          backdropFilter: 'blur(10px)',
+          marginTop: '-5px',
+          marginBottom: '5px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+        }}>
+          {/* Avatar Type Toggle */}
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button
+              onClick={() => {
+                setAvatarType('svg');
+                localStorage.setItem('moni_avatar_type', 'svg');
+                addBridgeLog('Avatar görünümü: Siber (SVG)');
+              }}
+              style={{
+                background: avatarType === 'svg' ? 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))' : 'transparent',
+                border: 'none',
+                borderRadius: '12px',
+                color: avatarType === 'svg' ? '#07080d' : 'var(--color-primary)',
+                padding: '4px 10px',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                outline: 'none'
+              }}
+            >
+              🤖 Siber
+            </button>
+            <button
+              onClick={() => {
+                setAvatarType('image');
+                localStorage.setItem('moni_avatar_type', 'image');
+                addBridgeLog('Avatar görünümü: Görsel (Resim)');
+              }}
+              style={{
+                background: avatarType === 'image' ? 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))' : 'transparent',
+                border: 'none',
+                borderRadius: '12px',
+                color: avatarType === 'image' ? '#07080d' : 'var(--color-primary)',
+                padding: '4px 10px',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                outline: 'none'
+              }}
+            >
+              👩 Görsel
+            </button>
+          </div>
+
+          {/* Divider */}
+          <div style={{ width: '1px', height: '16px', background: 'rgba(255, 255, 255, 0.1)' }} />
+
+          {/* Eye Color Picker */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '0.68rem', color: 'var(--color-secondary)', fontWeight: 600 }}>Göz:</span>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {[
+                { name: 'blue', color: '#00f0ff', label: 'Mavi' },
+                { name: 'black', color: '#12141c', label: 'Siyah', border: '1px solid rgba(255,255,255,0.4)' },
+                { name: 'purple', color: '#9d4edd', label: 'Mor' },
+                { name: 'green', color: '#39ff14', label: 'Yeşil' },
+                { name: 'gold', color: '#ffd700', label: 'Altın' }
+              ].map((colorItem) => (
+                <button
+                  key={colorItem.name}
+                  onClick={() => {
+                    if (avatarType !== 'svg') {
+                      setAvatarType('svg');
+                      localStorage.setItem('moni_avatar_type', 'svg');
+                    }
+                    setEyeColor(colorItem.name);
+                    localStorage.setItem('moni_eye_color', colorItem.name);
+                    addBridgeLog(`Göz rengi değiştirildi: ${colorItem.label}`);
+                  }}
+                  style={{
+                    width: '14px',
+                    height: '14px',
+                    borderRadius: '50%',
+                    backgroundColor: colorItem.color,
+                    border: eyeColor === colorItem.name ? '2px solid #fff' : colorItem.border || '1px solid rgba(255,255,255,0.1)',
+                    boxShadow: eyeColor === colorItem.name ? `0 0 8px ${colorItem.color}` : 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                    transition: 'all 0.2s',
+                    transform: eyeColor === colorItem.name ? 'scale(1.2)' : 'scale(1)',
+                    outline: 'none'
+                  }}
+                  title={colorItem.label}
+                />
+              ))}
+            </div>
           </div>
         </div>
 
@@ -1975,6 +2097,95 @@ export const MoniDashboard: React.FC = () => {
             {!geminiApiKey 
               ? 'Moni\'nin canlı konuşması ve her soruya cevap vermesi için buraya API anahtarı girmelisiniz.' 
               : 'Canlı yapay zeka aktif! API anahtarınız yerel olarak saklanmaktadır.'}
+          </div>
+        </div>
+
+        {/* Avatar and Appearance Configuration */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '12px', marginBottom: '10px' }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-primary)' }}>👤 Asistan Görünümü</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => {
+                setAvatarType('svg');
+                localStorage.setItem('moni_avatar_type', 'svg');
+                addBridgeLog('Avatar görünümü: Siber (SVG)');
+              }}
+              style={{
+                flex: 1,
+                background: avatarType === 'svg' ? 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))' : 'rgba(0, 0, 0, 0.3)',
+                border: avatarType === 'svg' ? 'none' : '1px solid var(--border-color)',
+                borderRadius: '8px',
+                color: avatarType === 'svg' ? '#07080d' : 'var(--color-primary)',
+                padding: '8px 12px',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                outline: 'none'
+              }}
+            >
+              🤖 Siber (SVG)
+            </button>
+            <button
+              onClick={() => {
+                setAvatarType('image');
+                localStorage.setItem('moni_avatar_type', 'image');
+                addBridgeLog('Avatar görünümü: Görsel (Resim)');
+              }}
+              style={{
+                flex: 1,
+                background: avatarType === 'image' ? 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))' : 'rgba(0, 0, 0, 0.3)',
+                border: avatarType === 'image' ? 'none' : '1px solid var(--border-color)',
+                borderRadius: '8px',
+                color: avatarType === 'image' ? '#07080d' : 'var(--color-primary)',
+                padding: '8px 12px',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                outline: 'none'
+              }}
+            >
+              👩 Görsel (Resim)
+            </button>
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '6px' }}>
+            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)' }}>Siber Avatar Göz Rengi:</span>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {[
+                { name: 'blue', color: '#00f0ff', label: 'Mavi' },
+                { name: 'black', color: '#12141c', label: 'Siyah', border: '1px solid rgba(255,255,255,0.4)' },
+                { name: 'purple', color: '#9d4edd', label: 'Mor' },
+                { name: 'green', color: '#39ff14', label: 'Yeşil' },
+                { name: 'gold', color: '#ffd700', label: 'Altın' }
+              ].map((colorItem) => (
+                <button
+                  key={colorItem.name}
+                  onClick={() => {
+                    setEyeColor(colorItem.name);
+                    localStorage.setItem('moni_eye_color', colorItem.name);
+                    setAvatarType('svg');
+                    localStorage.setItem('moni_avatar_type', 'svg');
+                    addBridgeLog(`Göz rengi ayarlandı: ${colorItem.label}`);
+                  }}
+                  style={{
+                    width: '16px',
+                    height: '16px',
+                    borderRadius: '50%',
+                    backgroundColor: colorItem.color,
+                    border: eyeColor === colorItem.name ? '2px solid #fff' : colorItem.border || '1px solid rgba(255,255,255,0.1)',
+                    boxShadow: eyeColor === colorItem.name ? `0 0 10px ${colorItem.color}` : 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                    transition: 'all 0.2s',
+                    transform: eyeColor === colorItem.name ? 'scale(1.2)' : 'scale(1)',
+                    outline: 'none'
+                  }}
+                  title={colorItem.label}
+                />
+              ))}
+            </div>
           </div>
         </div>
 

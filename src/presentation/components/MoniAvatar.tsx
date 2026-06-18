@@ -3,9 +3,41 @@ import React from 'react';
 interface MoniAvatarProps {
   isSpeaking: boolean;
   isListening: boolean;
+  eyeColor?: string;
 }
 
-export const MoniAvatar: React.FC<MoniAvatarProps> = ({ isSpeaking, isListening }) => {
+export const MoniAvatar: React.FC<MoniAvatarProps> = ({ isSpeaking, isListening, eyeColor = 'blue' }) => {
+  // Resolve colors based on eyeColor prop
+  let pupilFill = 'var(--accent-cyan)';
+  let bgFill = 'rgba(0, 240, 255, 0.08)';
+  let pupilStroke = 'none';
+  let pupilStrokeWidth = '0';
+
+  switch (eyeColor) {
+    case 'black':
+      pupilFill = '#12141c';
+      bgFill = 'rgba(255, 255, 255, 0.04)';
+      pupilStroke = 'rgba(255, 255, 255, 0.35)';
+      pupilStrokeWidth = '1';
+      break;
+    case 'purple':
+      pupilFill = 'var(--accent-purple)';
+      bgFill = 'rgba(157, 78, 221, 0.12)';
+      break;
+    case 'green':
+      pupilFill = 'var(--accent-green)';
+      bgFill = 'rgba(57, 255, 20, 0.12)';
+      break;
+    case 'gold':
+      pupilFill = '#ffd700';
+      bgFill = 'rgba(255, 215, 0, 0.12)';
+      break;
+    case 'blue':
+    default:
+      pupilFill = 'var(--accent-cyan)';
+      bgFill = 'rgba(0, 240, 255, 0.08)';
+      break;
+  }
   return (
     <div className={`moni-avatar-wrapper ${isListening ? 'listening' : ''} ${isSpeaking ? 'speaking' : ''}`}>
       <svg
@@ -56,15 +88,15 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({ isSpeaking, isListening 
         <g className="avatar-eyes">
           {/* Left Eye */}
           <g transform="translate(68, 85)">
-            <ellipse cx="0" cy="0" rx="10" ry="10" fill="rgba(0, 240, 255, 0.08)" />
-            <ellipse cx="0" cy="0" rx="6" ry="6" fill="var(--accent-cyan)" filter="url(#neonGlow)" className="eye-pupil" />
+            <ellipse cx="0" cy="0" rx="10" ry="10" fill={bgFill} />
+            <ellipse cx="0" cy="0" rx="6" ry="6" fill={pupilFill} stroke={pupilStroke} strokeWidth={pupilStrokeWidth} filter="url(#neonGlow)" className="eye-pupil" />
             <path d="M-12 -12 L12 -12" stroke="rgba(255, 255, 255, 0.25)" strokeWidth="1" fill="none" />
           </g>
 
           {/* Right Eye */}
           <g transform="translate(132, 85)">
-            <ellipse cx="0" cy="0" rx="10" ry="10" fill="rgba(0, 240, 255, 0.08)" />
-            <ellipse cx="0" cy="0" rx="6" ry="6" fill="var(--accent-cyan)" filter="url(#neonGlow)" className="eye-pupil" />
+            <ellipse cx="0" cy="0" rx="10" ry="10" fill={bgFill} />
+            <ellipse cx="0" cy="0" rx="6" ry="6" fill={pupilFill} stroke={pupilStroke} strokeWidth={pupilStrokeWidth} filter="url(#neonGlow)" className="eye-pupil" />
             <path d="M-12 -12 L12 -12" stroke="rgba(255, 255, 255, 0.25)" strokeWidth="1" fill="none" />
           </g>
         </g>
@@ -149,7 +181,6 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({ isSpeaking, isListening 
 
         /* Listen mode additions */
         .listening .eye-pupil {
-          fill: var(--accent-cyan) !important;
           animation: eyeScan 2.5s infinite ease-in-out;
         }
 
