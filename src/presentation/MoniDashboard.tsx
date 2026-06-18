@@ -1114,9 +1114,9 @@ export const MoniDashboard: React.FC = () => {
         
         {/* Animated Avatar Section */}
         <div style={{
-          width: '280px',
-          height: '280px',
-          borderRadius: '50%',
+          width: 'min(380px, 85vw)',
+          height: 'min(380px, 85vw)',
+          borderRadius: '24px',
           border: '2px solid rgba(0, 240, 255, 0.2)',
           boxShadow: '0 0 25px rgba(0, 240, 255, 0.15)',
           background: 'rgba(255, 255, 255, 0.02)',
@@ -1130,7 +1130,7 @@ export const MoniDashboard: React.FC = () => {
             position: 'relative',
             width: '100%',
             height: '100%',
-            borderRadius: '50%',
+            borderRadius: '24px',
             overflow: 'hidden',
             display: 'flex',
             alignItems: 'center',
