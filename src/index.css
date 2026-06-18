@@ -237,10 +237,10 @@ code {
 
 .phone-container {
   width: 100%;
-  max-width: 470px;
+  max-width: 580px;
   height: 94vh;
-  min-height: 760px;
-  max-height: 950px;
+  min-height: 820px;
+  max-height: 1000px;
   background: rgba(12, 14, 22, 0.8);
   backdrop-filter: blur(30px);
   -webkit-backdrop-filter: blur(30px);
