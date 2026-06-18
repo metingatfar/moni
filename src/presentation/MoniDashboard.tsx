@@ -941,28 +941,18 @@ export const MoniDashboard: React.FC = () => {
 
   const handleMicClick = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const isCustomEnabled = localStorage.getItem('moni_custom_voice_enabled') === 'true';
     
-    if (isCustomEnabled) {
-      const pitch = parseFloat(localStorage.getItem('moni_custom_voice_pitch') || '1.0');
-      const detune = parseInt(localStorage.getItem('moni_custom_voice_detune') || '0', 10);
-      const effect = localStorage.getItem('moni_custom_voice_effect') || 'none';
-      playCustomVoice(pitch, detune, effect);
-      
-      setTimeout(() => {
-        if (SpeechRecognition) {
-          startCommandListening();
-        } else {
-          simulateMicListening();
-        }
-      }, 1100);
-    } else {
+    if ((window as any).moniAudioContext) {
+      playAssistantBeep((window as any).moniAudioContext);
+    }
+
+    setTimeout(() => {
       if (SpeechRecognition) {
         startCommandListening();
       } else {
         simulateMicListening();
       }
-    }
+    }, 250);
   };
 
   const handleAddContact = async (e: React.FormEvent) => {
