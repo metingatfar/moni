@@ -646,6 +646,220 @@ export const MoniDashboard: React.FC = () => {
       return;
     }
 
+    // Voice Command: Take a note ("not al", "not ekle", etc.)
+    const isNoteCommand = 
+      textLower.includes('not al') || 
+      textLower.includes('not ekle') || 
+      textLower.includes('not yaz') || 
+      textLower.includes('not et') ||
+      textLower.startsWith('not:');
+
+    if (isNoteCommand) {
+      let noteContent = text
+        .replace(/moni/gi, '')
+        .replace(/not al/gi, '')
+        .replace(/not ekle/gi, '')
+        .replace(/not yaz/gi, '')
+        .replace(/not et/gi, '')
+        .trim();
+        
+      noteContent = noteContent.replace(/^[:\-,\s]+/, '').trim();
+      
+      if (!noteContent) {
+        noteContent = "Boş Not";
+      }
+
+      const words = noteContent.split(/\s+/);
+      let title = words.slice(0, 5).join(' ');
+      if (title.length > 30) {
+        title = title.slice(0, 27) + '...';
+      }
+      if (!title) {
+        title = "Yeni Not";
+      }
+
+      const newNote = {
+        id: Date.now().toString(),
+        title: title,
+        content: noteContent,
+        dateTime: new Date(),
+        color: '#9d4ede'
+      };
+
+      await databaseService.saveNote(newNote);
+      const updatedNotes = await databaseService.getNotes();
+      setNotes(updatedNotes);
+      addBridgeLog(`Veritabanı güncellendi: Not eklendi -> ${title}`);
+
+      const responseMsg: Message = {
+        role: 'assistant',
+        content: `"${title}" başlığıyla notunuzu kaydettim.`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, responseMsg]);
+      await databaseService.saveChatMessage(responseMsg);
+      speakText(responseMsg.content, () => {
+        if (isWakeWordListening) startWakeWordRecognition();
+      });
+      return;
+    }
+
+    // Voice Command: Set/adjust appointment ("randevu ayarla", "randevu ekle", "toplantı")
+    const isAppointmentCommand = 
+      textLower.includes('randevu') || 
+      textLower.includes('toplantı') || 
+      textLower.includes('buluşma');
+
+    if (isAppointmentCommand) {
+      let targetDate = new Date();
+      
+      if (textLower.includes('yarın')) {
+        targetDate.setDate(targetDate.getDate() + 1);
+      } else if (textLower.includes('öbür gün') || textLower.includes('ertesi gün')) {
+        targetDate.setDate(targetDate.getDate() + 2);
+      }
+      
+      let hour = 12;
+      let minute = 0;
+      let timeFound = false;
+
+      const timeRegex = /(?:saat\s*)?(\d{1,2})[\s:.]+(\d{2})/i;
+      const timeMatch = textLower.match(timeRegex);
+      if (timeMatch) {
+        hour = parseInt(timeMatch[1], 10);
+        minute = parseInt(timeMatch[2], 10);
+        timeFound = true;
+      } else {
+        const hourRegex = /saat\s*(\d{1,2})/i;
+        const hourMatch = textLower.match(hourRegex);
+        if (hourMatch) {
+          hour = parseInt(hourMatch[1], 10);
+          timeFound = true;
+        } else {
+          const textHours: { [key: string]: number } = {
+            'bir': 1, 'iki': 2, 'üç': 3, 'dört': 4, 'dort': 4, 'beş': 5, 'bes': 5,
+            'altı': 6, 'alti': 6, 'yedi': 7, 'sekiz': 8, 'dokuz': 9, 'on': 10,
+            'on bir': 11, 'oniki': 12, 'on iki': 12, 'on üç': 13, 'on dört': 14,
+            'on beş': 15, 'on altı': 16, 'on yedi': 17, 'on sekiz': 18, 'on dokuz': 19,
+            'yirmi': 20, 'yirmi bir': 21, 'yirmi iki': 22, 'yirmi üç': 23
+          };
+          for (const key of Object.keys(textHours)) {
+            if (textLower.includes(`saat ${key}`)) {
+              hour = textHours[key];
+              timeFound = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (timeFound) {
+        targetDate.setHours(hour, minute, 0, 0);
+      } else {
+        targetDate = new Date(Date.now() + 3600000);
+      }
+
+      let title = text
+        .replace(/moni/gi, '')
+        .replace(/randevumu ayarla/gi, '')
+        .replace(/randevu ayarla/gi, '')
+        .replace(/randevu ekle/gi, '')
+        .replace(/randevu/gi, '')
+        .replace(/toplantı ekle/gi, '')
+        .replace(/toplantısı/gi, '')
+        .replace(/toplantı/gi, '')
+        .replace(/yarın/gi, '')
+        .replace(/bugün/gi, '')
+        .replace(/öbür gün/gi, '')
+        .replace(/(saat\s*)?\d{1,2}([\s:.]+\d{2})?/gi, '')
+        .replace(/saat\s*(bir|iki|üç|dört|dort|beş|bes|altı|alti|yedi|sekiz|dokuz|on|yirmi)/gi, '')
+        .trim();
+
+      title = title.replace(/^[:\-,\s]+/, '').trim();
+      if (!title) {
+        title = "Randevu / Etkinlik";
+      }
+
+      const newReminder: Reminder = {
+        id: Date.now().toString(),
+        title,
+        dateTime: targetDate,
+        isCompleted: false
+      };
+
+      await databaseService.saveReminder(newReminder);
+      const updatedReminders = await databaseService.getReminders();
+      setReminders(updatedReminders);
+      addBridgeLog(`Veritabanı güncellendi: Randevu eklendi -> ${title} (${targetDate.toLocaleString('tr-TR')})`);
+
+      const dateStr = targetDate.toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
+      const timeStr = targetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const responseMsg: Message = {
+        role: 'assistant',
+        content: `Randevunuz ayarlandı: ${dateStr} saat ${timeStr}'da "${title}" etkinliğini kaydettim.`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, responseMsg]);
+      await databaseService.saveChatMessage(responseMsg);
+      speakText(responseMsg.content, () => {
+        if (isWakeWordListening) startWakeWordRecognition();
+      });
+      return;
+    }
+
+    // Voice Command: Add task ("görev ekle", "yapılacak ekle", etc.)
+    const isTodoCommand = 
+      textLower.includes('görev ekle') || 
+      textLower.includes('yapılacak ekle') || 
+      textLower.includes('listeye ekle');
+
+    if (isTodoCommand) {
+      let task = text
+        .replace(/moni/gi, '')
+        .replace(/görev ekle/gi, '')
+        .replace(/yapılacak ekle/gi, '')
+        .replace(/listeye ekle/gi, '')
+        .trim();
+
+      task = task.replace(/^[:\-,\s]+/, '').trim();
+      if (!task) {
+        task = "Yeni Görev";
+      }
+
+      let priority: 'low' | 'medium' | 'high' = 'medium';
+      if (textLower.includes('yüksek') || textLower.includes('önemli') || textLower.includes('acil')) {
+        priority = 'high';
+      } else if (textLower.includes('düşük') || textLower.includes('önemsiz')) {
+        priority = 'low';
+      }
+
+      const newTodo = {
+        id: Date.now().toString(),
+        task,
+        dateTime: new Date(),
+        isCompleted: false,
+        priority
+      };
+
+      await databaseService.saveTodo(newTodo);
+      const updatedTodos = await databaseService.getTodos();
+      setTodos(updatedTodos);
+      addBridgeLog(`Veritabanı güncellendi: Görev eklendi -> ${task}`);
+
+      const responseMsg: Message = {
+        role: 'assistant',
+        content: `"${task}" görevini yapılacaklar listenize ekledim.`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, responseMsg]);
+      await databaseService.saveChatMessage(responseMsg);
+      speakText(responseMsg.content, () => {
+        if (isWakeWordListening) startWakeWordRecognition();
+      });
+      return;
+    }
+
     // Default AI response
     try {
       const currentHistory = await databaseService.getChatHistory();
