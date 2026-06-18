@@ -1124,7 +1124,8 @@ export const MoniDashboard: React.FC = () => {
           alignItems: 'center',
           justifyContent: 'center',
           marginTop: '10px',
-          position: 'relative'
+          position: 'relative',
+          flexShrink: 0
         }}>
           <div style={{
             position: 'relative',
