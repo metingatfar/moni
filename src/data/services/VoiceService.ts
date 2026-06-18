@@ -100,8 +100,14 @@ export class VoiceService {
         const data = await response.json();
         if (data.audioContent) {
           const audioUrl = `data:audio/mp3;base64,${data.audioContent}`;
-          const audio = new Audio(audioUrl);
           
+          let audio = (window as any).moniAudio;
+          if (!audio) {
+            audio = new Audio();
+            (window as any).moniAudio = audio;
+          }
+          
+          audio.src = audioUrl;
           audio.onended = () => {
             if (onEnd) onEnd();
           };
@@ -113,10 +119,88 @@ export class VoiceService {
           return; // Success, exit speak method
         }
       } catch (e) {
-        console.error("Cloud TTS failed, falling back to local TTS:", e);
+        console.error("Cloud TTS failed, falling back to Google Translate TTS:", e);
       }
     }
 
+    // Fall back to Google Translate TTS which will automatically fall back to SpeechSynthesis on failure
+    await this.playGoogleTranslateTts(text, profile, onEnd);
+  }
+
+  private splitTextIntoChunks(text: string, maxLength: number): string[] {
+    const words = text.split(/\s+/);
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    for (const word of words) {
+      if ((currentChunk + ' ' + word).trim().length > maxLength) {
+        if (currentChunk.trim()) {
+          chunks.push(currentChunk.trim());
+        }
+        currentChunk = word;
+      } else {
+        currentChunk = (currentChunk + ' ' + word).trim();
+      }
+    }
+    if (currentChunk.trim()) {
+      chunks.push(currentChunk.trim());
+    }
+    return chunks;
+  }
+
+  private async playGoogleTranslateTts(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa' | 'can' | 'murat', onEnd?: () => void) {
+    if (typeof window === 'undefined') {
+      if (onEnd) onEnd();
+      return;
+    }
+
+    const chunks = this.splitTextIntoChunks(text, 180);
+    let audio = (window as any).moniAudio;
+    if (!audio) {
+      audio = new Audio();
+      (window as any).moniAudio = audio;
+    }
+
+    let currentChunkIndex = 0;
+
+    const playNext = () => {
+      if (currentChunkIndex >= chunks.length) {
+        audio.onended = null;
+        audio.onerror = null;
+        if (onEnd) onEnd();
+        return;
+      }
+
+      const chunk = chunks[currentChunkIndex];
+      currentChunkIndex++;
+
+      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=tr&client=tw-ob&q=${encodeURIComponent(chunk)}`;
+      audio.src = url;
+      
+      audio.play().catch(err => {
+        console.error("Google Translate TTS play error, falling back to local SpeechSynthesis:", err);
+        this.speakWithLocalSpeechSynthesis(chunk, profile, () => {
+          playNext();
+        });
+      });
+    };
+
+    audio.onended = () => {
+      playNext();
+    };
+
+    audio.onerror = (e) => {
+      console.warn("Google Translate TTS error, attempting local SpeechSynthesis:", e);
+      const currentChunk = chunks[currentChunkIndex - 1] || text;
+      this.speakWithLocalSpeechSynthesis(currentChunk, profile, () => {
+        playNext();
+      });
+    };
+
+    playNext();
+  }
+
+  private speakWithLocalSpeechSynthesis(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa' | 'can' | 'murat', onEnd?: () => void) {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       if (onEnd) onEnd();
       return;
@@ -127,7 +211,6 @@ export class VoiceService {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'tr-TR';
 
-    // Group available system voices into gender metadata structures
     const femaleSystemVoices = this.voices.filter(v => 
       v.name.toLowerCase().match(/(dilara|yelda|female|google|seda|filiz|sibel)/)
     );
@@ -178,7 +261,6 @@ export class VoiceService {
         break;
     }
 
-    // Check system capabilities and apply pitch shifts if necessary
     const hasFemaleSystemVoice = femaleSystemVoices.length > 0;
     const hasMaleSystemVoice = maleSystemVoices.length > 0;
 
@@ -187,7 +269,6 @@ export class VoiceService {
       const isActuallyMale = nameLower.match(/(tolga|cem|male|hakan)/);
       const isActuallyFemale = nameLower.match(/(dilara|yelda|female|google|seda)/);
 
-      // If female voice is required but only male voice is present
       if ((profile === 'selin' || profile === 'derin' || profile === 'google-assistant' || profile === 'gemini-vega' || profile === 'gemini-ursa') && (!hasFemaleSystemVoice || isActuallyMale)) {
         if (profile === 'selin') pitch = 1.55;
         else if (profile === 'derin') pitch = 1.75;
@@ -196,7 +277,6 @@ export class VoiceService {
         else if (profile === 'gemini-ursa') pitch = 1.30;
       }
 
-      // If male voice is required but only female voice is present
       if ((profile === 'can' || profile === 'murat') && (!hasMaleSystemVoice || isActuallyFemale)) {
         pitch = profile === 'can' ? 0.65 : 0.52;
       }
