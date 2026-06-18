@@ -114,7 +114,10 @@ export const MoniDashboard: React.FC = () => {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioContextClass) return;
 
-      const audioCtx = new AudioContextClass();
+      if (!(window as any).moniAudioContext) {
+        (window as any).moniAudioContext = new AudioContextClass();
+      }
+      const audioCtx = (window as any).moniAudioContext;
       if (audioCtx.state === 'suspended') {
         await audioCtx.resume();
       }
@@ -2029,11 +2032,28 @@ export const MoniDashboard: React.FC = () => {
   };
 
   const handlePageClick = async () => {
+    if ((window as any).moniAudioUnlocked) {
+      // 2. Wake Word Trigger check
+      if (isWakeWordListening && !isRecording && !isSpeakingRef.current) {
+        if (!wakeRecognitionRef.current) {
+          startWakeWordRecognition();
+        } else {
+          try {
+            wakeRecognitionRef.current.start();
+          } catch (e) {}
+        }
+      }
+      return;
+    }
+
     // 1. Mobile Audio Engine Unlock
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioContextClass) {
-        const tempCtx = new AudioContextClass();
+        if (!(window as any).moniAudioContext) {
+          (window as any).moniAudioContext = new AudioContextClass();
+        }
+        const tempCtx = (window as any).moniAudioContext;
         if (tempCtx.state === 'suspended') {
           await tempCtx.resume();
         }
@@ -2049,6 +2069,22 @@ export const MoniDashboard: React.FC = () => {
     }
 
     try {
+      if (!(window as any).moniAudio) {
+        const audio = new Audio();
+        audio.src = '/chime.mp3';
+        await audio.play().catch(async () => {
+          // fallback to silent sound if chime.mp3 fails
+          audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+          await audio.play();
+          audio.pause();
+        });
+        (window as any).moniAudio = audio;
+      }
+    } catch (e) {
+      console.error("HTMLAudioElement unlock failed:", e);
+    }
+
+    try {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance('');
@@ -2057,6 +2093,9 @@ export const MoniDashboard: React.FC = () => {
     } catch (e) {
       console.error("SpeechSynthesis unlock failed:", e);
     }
+
+    (window as any).moniAudioUnlocked = true;
+    addBridgeLog("Moni Ses Motoru ve Donanımı telefonda başarıyla aktif edildi.");
 
     // 2. Wake Word Trigger check
     if (isWakeWordListening && !isRecording && !isSpeakingRef.current) {
