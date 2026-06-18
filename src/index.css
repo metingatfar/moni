@@ -210,3 +210,13 @@ code {
   0% { transform: scaleY(0.2); }
   100% { transform: scaleY(0.6); }
 }
+
+@keyframes mouth-scale {
+  0%, 100% { transform: scale(0.7, 0.2); }
+  50% { transform: scale(1.05, 1.35); }
+}
+
+@keyframes mouth-line-pulse {
+  0%, 100% { transform: scaleX(0.85); opacity: 0.4; }
+  50% { transform: scaleX(1.1); opacity: 0.9; }
+}
