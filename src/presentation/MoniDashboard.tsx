@@ -1170,6 +1170,12 @@ export const MoniDashboard: React.FC = () => {
           {isRecording ? 'Dinleniyor...' : 'Sesli Komut Ver'}
         </button>
 
+        {typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && (
+          <p style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.4)', marginTop: '-12px', marginBottom: '-5px', textAlign: 'center', maxWidth: '320px', lineHeight: '1.2' }}>
+            ℹ️ iPhone güvenlik kısıtlamaları nedeniyle asistanı bu butona basarak aktifleştiriniz.
+          </p>
+        )}
+
         {/* Grid Navigation Section */}
         <div style={{
           display: 'grid',
