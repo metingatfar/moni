@@ -220,3 +220,51 @@ code {
   0%, 100% { transform: scaleX(0.85); opacity: 0.4; }
   50% { transform: scaleX(1.1); opacity: 0.9; }
 }
+
+/* Dashboard Root & Phone Mockup Container Styles */
+.dashboard-root {
+  min-height: 100vh;
+  background-color: #07080d;
+  background-image: radial-gradient(circle at 50% 30%, rgba(157, 78, 221, 0.08), transparent 70%), radial-gradient(circle at 80% 80%, rgba(0, 240, 255, 0.05), transparent 50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  font-family: var(--font-sans);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.phone-container {
+  width: 100%;
+  max-width: 470px;
+  height: 94vh;
+  min-height: 760px;
+  max-height: 950px;
+  background: rgba(12, 14, 22, 0.8);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 40px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.8), inset 0 0 1px 1px rgba(255, 255, 255, 0.15), 0 0 40px rgba(0, 240, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+/* Responsive screen enlargement for actual phones */
+@media (max-width: 500px) {
+  .dashboard-root {
+    padding: 0 !important;
+  }
+  .phone-container {
+    max-width: 100% !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+}
