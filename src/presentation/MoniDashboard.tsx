@@ -2323,16 +2323,19 @@ export const MoniDashboard: React.FC = () => {
         if (!(window as any).moniAudioContext) {
           (window as any).moniAudioContext = new AudioContextClass();
         }
-        tempCtx = (window as any).moniAudioContext;
-        if (tempCtx.state === 'suspended') {
-          await tempCtx.resume();
+        const ctx = (window as any).moniAudioContext;
+        tempCtx = ctx;
+        if (ctx) {
+          if (ctx.state === 'suspended') {
+            await ctx.resume();
+          }
+          // Play silent sound to trigger hardware activation
+          const buffer = ctx.createBuffer(1, 1, 22050);
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          source.start(0);
         }
-        // Play silent sound to trigger hardware activation
-        const buffer = tempCtx.createBuffer(1, 1, 22050);
-        const source = tempCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(tempCtx.destination);
-        source.start(0);
       }
     } catch (e) {
       console.error("AudioContext unlock failed:", e);
