@@ -1,0 +1,24 @@
+{
+  "name": "MONI Akıllı Kişisel Asistan",
+  "short_name": "MONI",
+  "description": "MONI Akıllı Kişisel Asistan ve Özel Kalem Sistemi",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07080d",
+  "theme_color": "#00f0ff",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: moni-assistant
+    runtime: docker
+    repo: https://github.com/your-username/moni # Will be mapped to the actual repo on import
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
