@@ -8,7 +8,6 @@ import type { Reminder } from '../domain/entities/Reminder';
 import type { Message } from '../domain/repositories/AiRepository';
 import type { Note } from '../domain/entities/Note';
 import type { Todo } from '../domain/entities/Todo';
-import { MoniAvatar } from './components/MoniAvatar';
 
 const aiService = new LocalAiService();
 const bridgeService = new NativeBridge();
