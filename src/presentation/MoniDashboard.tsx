@@ -1919,21 +1919,33 @@ export const MoniDashboard: React.FC = () => {
         </div>
 
         {/* Gemini API Key Configuration */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '10px' }}>
+        <div style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: '8px', 
+          border: !geminiApiKey ? '2px dashed var(--accent-cyan)' : '1px solid rgba(255,255,255,0.03)', 
+          borderRadius: '12px',
+          padding: '12px',
+          background: !geminiApiKey ? 'rgba(0, 240, 255, 0.03)' : 'transparent',
+          boxShadow: !geminiApiKey ? '0 0 15px rgba(0, 240, 255, 0.1)' : 'none',
+          marginBottom: '10px'
+        }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-primary)' }}>✨ Gemini API Anahtarı</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: !geminiApiKey ? 'var(--accent-cyan)' : 'var(--color-primary)' }}>
+              ✨ Gemini API Anahtarı {!geminiApiKey && '(Gerekli ⚠️)'}
+            </span>
             <a 
               href="https://aistudio.google.com/" 
               target="_blank" 
               rel="noopener noreferrer" 
-              style={{ fontSize: '0.7rem', color: 'var(--accent-cyan)', textDecoration: 'none', fontWeight: 500 }}
+              style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', textDecoration: 'underline', fontWeight: 700 }}
             >
-              Ücretsiz Anahtar Al ↗
+              Ücretsiz Anahtar Al (Google AI Studio) ↗
             </a>
           </div>
           <input 
             type="password" 
-            placeholder="AI Studio API Anahtarınızı girin..." 
+            placeholder="AI Studio API Anahtarınızı buraya yapıştırın..." 
             value={geminiApiKey} 
             onChange={(e) => {
               const val = e.target.value;
@@ -1942,19 +1954,22 @@ export const MoniDashboard: React.FC = () => {
               addBridgeLog('Gemini API anahtarı güncellendi.');
             }}
             style={{
-              background: 'rgba(0, 0, 0, 0.3)',
-              border: '1px solid var(--border-color)',
+              background: 'rgba(0, 0, 0, 0.5)',
+              border: !geminiApiKey ? '2px solid var(--accent-cyan)' : '1px solid var(--border-color)',
               color: 'var(--color-primary)',
-              padding: '8px 12px',
+              padding: '10px 12px',
               borderRadius: '8px',
-              fontSize: '0.78rem',
+              fontSize: '0.82rem',
               outline: 'none',
               width: '100%',
-              boxSizing: 'border-box'
+              boxSizing: 'border-box',
+              boxShadow: !geminiApiKey ? '0 0 10px rgba(0, 240, 255, 0.2)' : 'none'
             }}
           />
-          <div style={{ fontSize: '0.64rem', color: 'var(--color-secondary)' }}>
-            Canlı yapay zeka cevapları için gereklidir. API anahtarı tamamen yerel olarak tarayıcınızda saklanır.
+          <div style={{ fontSize: '0.66rem', color: !geminiApiKey ? 'var(--accent-cyan)' : 'var(--color-secondary)' }}>
+            {!geminiApiKey 
+              ? 'Moni\'nin canlı konuşması ve her soruya cevap vermesi için buraya API anahtarı girmelisiniz.' 
+              : 'Canlı yapay zeka aktif! API anahtarınız yerel olarak saklanmaktadır.'}
           </div>
         </div>
 
