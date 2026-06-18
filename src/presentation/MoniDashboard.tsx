@@ -1277,6 +1277,33 @@ export const MoniDashboard: React.FC = () => {
           <p style={{ fontSize: '0.82rem', color: 'var(--color-secondary)', margin: 0, padding: '0 10px' }}>
             {reminderText}
           </p>
+          
+          {!geminiApiKey && (
+            <button
+              onClick={() => setCurrentView('settings')}
+              style={{
+                marginTop: '12px',
+                background: 'rgba(0, 240, 255, 0.1)',
+                border: '1px dashed var(--accent-cyan)',
+                borderRadius: '20px',
+                color: 'var(--accent-cyan)',
+                padding: '8px 18px',
+                fontSize: '0.78rem',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 0 15px rgba(0, 240, 255, 0.15)',
+                transition: 'all 0.2s',
+                fontFamily: 'var(--font-sans)',
+                outline: 'none'
+              }}
+              className="hover-scale"
+            >
+              🔑 Yapay Zekayı Etkinleştir (API Anahtarı Gir)
+            </button>
+          )}
         </div>
 
         {/* Sesli Komut Ver Button (Big glowing pill) */}
