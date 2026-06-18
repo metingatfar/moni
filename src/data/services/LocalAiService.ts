@@ -7,8 +7,66 @@ export class LocalAiService implements AiRepository {
     const lastUserMessage = userMessages[userMessages.length - 1]?.content || '';
     
     const inputLower = lastUserMessage.toLowerCase();
-    let baseResponse = '';
     
+    // Check if we have a Gemini API key
+    const geminiKey = localStorage.getItem('gemini_api_key') || (import.meta.env ? import.meta.env.VITE_***REMOVED*** : '') || '';
+
+    if (geminiKey && !useOfflineMode) {
+      try {
+        console.log('MONI AI: Calling Gemini API for real-time response.');
+        // Filter out empty messages and format them for Gemini API
+        const formattedHistory = messages
+          .filter(m => m.content && m.content.trim() !== '')
+          .map(m => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.content }]
+          }));
+
+        // Limit history length to last 15 messages for optimal performance
+        const historySlice = formattedHistory.slice(-15);
+
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: historySlice,
+            systemInstruction: {
+              parts: [{ 
+                text: "Sen Moni adında, son derece zeki, cana yakın ve profesyonel bir yapay zeka asistanı ve özel kalem yöneticisisin. Sana seslenildiğinde ya da konuşulduğunda, kullanıcıyla kibar, sıcak ve yardımsever bir tonda iletişim kurmalısın. Türkçe konuşmalısın. Cevapların kısa, net, samimi ve sesli okumaya tam uyumlu olmalıdır. Markdown biçimlendirmeleri (kalın yazılar, yıldızlar, listeler vb.) veya okunması zor semboller kullanma, çünkü verdiğin cevaplar doğrudan sesli olarak okunacaktır. Kullanıcının not alma, görev ekleme ve randevu planlama isteklerini başarıyla yönetiyorsun." 
+              }]
+            },
+            generationConfig: {
+              maxOutputTokens: 250,
+              temperature: 0.7
+            }
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) {
+            return text.trim();
+          }
+        } else {
+          const errText = await response.text();
+          console.error('Gemini API Error details:', errText);
+        }
+      } catch (e) {
+        console.error('Failed to get Gemini response:', e);
+      }
+    }
+
+    // Fallback if no key is present or in offline mode
+    if (!geminiKey) {
+      if (isFirstMessage) {
+        return "Merhaba! Ben yapay zeka asistanınız Moni. Benimle canlı konuşup her soruya gerçek yapay zeka cevapları alabilmek için lütfen sol menüdeki 'Sistem Ayarları' sayfasından ücretsiz bir Gemini API Anahtarı tanımlayın. Şu an deneme modundayım. Nasıl yardımcı olabilirim?";
+      }
+    }
+
+    let baseResponse = '';
     if (inputLower.includes('hava') || inputLower.includes('durum')) {
       baseResponse = 'Bugün hava güneşli ve sıcaklık yirmi beş derece civarında.';
     } else if (inputLower.includes('nasılsın') || inputLower.includes('nasıl gidiyor')) {
