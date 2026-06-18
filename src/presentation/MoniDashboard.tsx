@@ -956,7 +956,7 @@ export const MoniDashboard: React.FC = () => {
       } else {
         simulateMicListening();
       }
-    }, 250);
+    }, 550);
   };
 
   const handleAddContact = async (e: React.FormEvent) => {
