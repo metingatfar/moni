@@ -2316,13 +2316,14 @@ export const MoniDashboard: React.FC = () => {
     }
 
     // 1. Mobile Audio Engine Unlock
+    let tempCtx: AudioContext | null = null;
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioContextClass) {
         if (!(window as any).moniAudioContext) {
           (window as any).moniAudioContext = new AudioContextClass();
         }
-        const tempCtx = (window as any).moniAudioContext;
+        tempCtx = (window as any).moniAudioContext;
         if (tempCtx.state === 'suspended') {
           await tempCtx.resume();
         }
@@ -2340,13 +2341,10 @@ export const MoniDashboard: React.FC = () => {
     try {
       if (!(window as any).moniAudio) {
         const audio = new Audio();
-        audio.src = '/chime.mp3';
-        await audio.play().catch(async () => {
-          // fallback to silent sound if chime.mp3 fails
-          audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-          await audio.play();
-          audio.pause();
-        });
+        // Silently unlock HTMLAudioElement
+        audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+        await audio.play().catch(() => {});
+        audio.pause();
         (window as any).moniAudio = audio;
       }
     } catch (e) {
@@ -2361,6 +2359,11 @@ export const MoniDashboard: React.FC = () => {
       }
     } catch (e) {
       console.error("SpeechSynthesis unlock failed:", e);
+    }
+
+    // Play clean digital beep instead of chime music file
+    if (tempCtx) {
+      playAssistantBeep(tempCtx);
     }
 
     (window as any).moniAudioUnlocked = true;
