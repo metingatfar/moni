@@ -258,7 +258,12 @@ export const MoniDashboard: React.FC = () => {
     loadDatabaseData();
     const savedVoice = localStorage.getItem('moni_voice_type');
     if (savedVoice) {
-      setSelectedVoice(savedVoice);
+      if (savedVoice === 'can' || savedVoice === 'murat') {
+        setSelectedVoice('selin');
+        localStorage.setItem('moni_voice_type', 'selin');
+      } else {
+        setSelectedVoice(savedVoice);
+      }
     }
 
     const loadVoices = () => {
@@ -2004,8 +2009,6 @@ export const MoniDashboard: React.FC = () => {
             <option value="google-assistant">🤖 Google Asistan (Kadın - Net)</option>
             <option value="gemini-vega">✨ Gemini Vega (Kadın - Parlak)</option>
             <option value="gemini-ursa">🪐 Gemini Ursa (Kadın - Sıcak)</option>
-            <option value="can">👨 Can (Erkek - Dinamik)</option>
-            <option value="murat">👨 Murat (Erkek - Protokol)</option>
           </select>
         </div>
 

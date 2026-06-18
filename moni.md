@@ -12,15 +12,11 @@ Bu dosya, MONI projesinin geliştirilmesinde kullanılacak **nihai sistem yöner
 ---
 
 ## 2. ÇOKLU SES (TTS) VE KARAKTER GEREKSİNİMLERİ
-MONI için birbirinden tamamen bağımsız 4 ayrı Türkçe (`tr-TR`) ses profili kodlanmıştır. TTS motorunda bu seslerin cinsiyet (Male/Female), Pitch (Ses perdesi) ve Rate (Konuşma hızı) ayarları dinamik olarak yönetilir:
+MONI için Türkçe (`tr-TR`) ses profilleri kodlanmıştır. TTS motorunda bu seslerin cinsiyet (Female), Pitch (Ses perdesi) ve Rate (Konuşma hızı) ayarları dinamik olarak yönetilir:
 1. **Selin (Kadın):** Kurumsal, ciddi ve net özel kalem tonu.
    - *Frekans Ayarları:* Pitch: `1.05`, Rate: `1.0` (Standart/Ciddi)
 2. **Derin (Kadın):** Günlük sohbete uygun, sıcak ve doğal ton.
    - *Frekans Ayarları:* Pitch: `1.25`, Rate: `0.95` (Tiz/Sıcak)
-3. **Can (Erkek):** Dinamik, enerjik ve hızlı yanıt veren ton.
-   - *Frekans Ayarları:* Pitch: `0.78`, Rate: `1.05` (Orta-Pes/Hızlı)
-4. **Murat (Erkek):** Güven veren, kalın ve tok protokol tonu.
-   - *Frekans Ayarları:* Pitch: `0.52`, Rate: `0.90` (Pes/Yavaş)
 
 ---
 
@@ -105,16 +101,6 @@ const speakText = (text: string, selectedVoice: string, trVoicesList: SpeechSynt
         utterance.voice = femaleVoices.find(v => v.name.toLowerCase().includes('google')) || femaleVoices[1] || femaleVoices[0] || defaultVoice || null;
         utterance.pitch = 1.25;
         utterance.rate = 0.95;
-        break;
-      case 'can': // Enerjik erkek
-        utterance.voice = maleVoices[0] || defaultVoice || null;
-        utterance.pitch = maleVoices[0] ? 1.05 : 0.78;
-        utterance.rate = 1.05;
-        break;
-      case 'murat': // Protokol erkek
-        utterance.voice = maleVoices[1] || maleVoices[0] || defaultVoice || null;
-        utterance.pitch = maleVoices[1] || maleVoices[0] ? 0.8 : 0.52;
-        utterance.rate = 0.90;
         break;
     }
     window.speechSynthesis.speak(utterance);

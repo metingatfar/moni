@@ -35,7 +35,7 @@ export class VoiceService {
     return this.voices;
   }
 
-  public async speak(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa' | 'can' | 'murat', onEnd?: () => void) {
+  public async speak(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa', onEnd?: () => void) {
     const apiKey = import.meta.env.***REMOVED*** || '';
 
     if (apiKey.trim()) {
@@ -66,18 +66,6 @@ export class VoiceService {
           case 'gemini-ursa':
             voiceName = 'tr-TR-Wavenet-C';
             pitch = -2.0; // Warmer pitch
-            speakingRate = 0.93;
-            break;
-          case 'can':
-            voiceName = 'tr-TR-Wavenet-B'; // Male Wavenet
-            gender = 'MALE';
-            pitch = 0.0;
-            break;
-          case 'murat':
-            voiceName = 'tr-TR-Wavenet-E'; // Deep Male
-            gender = 'MALE';
-            pitch = -3.0;
-            break;
         }
 
         const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
@@ -148,7 +136,7 @@ export class VoiceService {
     return chunks;
   }
 
-  private async playGoogleTranslateTts(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa' | 'can' | 'murat', onEnd?: () => void) {
+  private async playGoogleTranslateTts(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa', onEnd?: () => void) {
     if (typeof window === 'undefined') {
       if (onEnd) onEnd();
       return;
@@ -200,7 +188,7 @@ export class VoiceService {
     playNext();
   }
 
-  private speakWithLocalSpeechSynthesis(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa' | 'can' | 'murat', onEnd?: () => void) {
+  private speakWithLocalSpeechSynthesis(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa', onEnd?: () => void) {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       if (onEnd) onEnd();
       return;
@@ -213,9 +201,6 @@ export class VoiceService {
 
     const femaleSystemVoices = this.voices.filter(v => 
       v.name.toLowerCase().match(/(dilara|yelda|female|google|seda|filiz|sibel)/)
-    );
-    const maleSystemVoices = this.voices.filter(v => 
-      v.name.toLowerCase().match(/(tolga|cem|male|can|hakan|erhan)/)
     );
     const defaultVoice = this.voices[0] || null;
 
@@ -249,25 +234,13 @@ export class VoiceService {
         pitch = 0.92;
         rate = 0.90;
         break;
-      case 'can':
-        targetVoice = maleSystemVoices[0] || defaultVoice;
-        pitch = 1.05;
-        rate = 1.05;
-        break;
-      case 'murat':
-        targetVoice = maleSystemVoices[1] || maleSystemVoices[0] || defaultVoice;
-        pitch = 0.8;
-        rate = 0.9;
-        break;
     }
 
     const hasFemaleSystemVoice = femaleSystemVoices.length > 0;
-    const hasMaleSystemVoice = maleSystemVoices.length > 0;
 
     if (targetVoice) {
       const nameLower = targetVoice.name.toLowerCase();
       const isActuallyMale = nameLower.match(/(tolga|cem|male|hakan)/);
-      const isActuallyFemale = nameLower.match(/(dilara|yelda|female|google|seda)/);
 
       if ((profile === 'selin' || profile === 'derin' || profile === 'google-assistant' || profile === 'gemini-vega' || profile === 'gemini-ursa') && (!hasFemaleSystemVoice || isActuallyMale)) {
         if (profile === 'selin') pitch = 1.55;
@@ -275,10 +248,6 @@ export class VoiceService {
         else if (profile === 'google-assistant') pitch = 1.5;
         else if (profile === 'gemini-vega') pitch = 1.85;
         else if (profile === 'gemini-ursa') pitch = 1.30;
-      }
-
-      if ((profile === 'can' || profile === 'murat') && (!hasMaleSystemVoice || isActuallyFemale)) {
-        pitch = profile === 'can' ? 0.65 : 0.52;
       }
 
       utterance.voice = targetVoice;
