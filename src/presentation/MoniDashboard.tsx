@@ -1114,8 +1114,8 @@ export const MoniDashboard: React.FC = () => {
         
         {/* Animated Avatar Section */}
         <div style={{
-          width: '160px',
-          height: '160px',
+          width: '280px',
+          height: '280px',
           borderRadius: '50%',
           border: '2px solid rgba(0, 240, 255, 0.2)',
           boxShadow: '0 0 25px rgba(0, 240, 255, 0.15)',
@@ -1136,9 +1136,9 @@ export const MoniDashboard: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             boxShadow: isRecording 
-              ? '0 0 30px rgba(0, 240, 255, 0.5), inset 0 0 15px rgba(0, 240, 255, 0.3)' 
+              ? '0 0 35px rgba(0, 240, 255, 0.6), inset 0 0 20px rgba(0, 240, 255, 0.4)' 
               : isMoniSpeaking 
-                ? '0 0 30px rgba(157, 78, 221, 0.5), inset 0 0 15px rgba(157, 78, 221, 0.3)'
+                ? '0 0 35px rgba(157, 78, 221, 0.6), inset 0 0 20px rgba(157, 78, 221, 0.4)'
                 : 'none',
             border: isRecording
               ? '2px solid var(--accent-cyan)'
@@ -1164,6 +1164,58 @@ export const MoniDashboard: React.FC = () => {
                 transition: 'transform 0.3s ease'
               }}
             />
+
+            {/* Holographic Mouth Speaking Wave Overlay */}
+            <div style={{
+              position: 'absolute',
+              top: '68%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: '70px',
+              height: '24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              pointerEvents: 'none'
+            }}>
+              {isMoniSpeaking ? (
+                <svg width="100%" height="100%" viewBox="0 0 70 24" style={{ filter: 'drop-shadow(0 0 5px var(--accent-cyan))' }}>
+                  <ellipse 
+                    cx="35" 
+                    cy="12" 
+                    rx="18" 
+                    ry="6" 
+                    fill="none" 
+                    stroke="var(--accent-cyan)" 
+                    strokeWidth="2.5"
+                    style={{
+                      transformOrigin: 'center',
+                      animation: 'mouth-scale 0.25s infinite ease-in-out'
+                    }}
+                  />
+                  <line 
+                    x1="15" 
+                    y1="12" 
+                    x2="55" 
+                    y2="12" 
+                    stroke="var(--accent-cyan)" 
+                    strokeWidth="2"
+                    style={{
+                      transformOrigin: 'center',
+                      animation: 'mouth-line-pulse 0.25s infinite ease-in-out'
+                    }}
+                  />
+                </svg>
+              ) : (
+                <div style={{
+                  width: '28px',
+                  height: '2px',
+                  backgroundColor: 'rgba(0, 240, 255, 0.7)',
+                  borderRadius: '2px',
+                  boxShadow: '0 0 6px var(--accent-cyan)'
+                }} />
+              )}
+            </div>
 
             {/* Speaking animated overlay waves */}
             {isMoniSpeaking && (
