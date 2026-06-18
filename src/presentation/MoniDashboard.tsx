@@ -459,30 +459,30 @@ export const MoniDashboard: React.FC = () => {
         transcript.includes('moni') || 
         transcript.includes('boni') || 
         transcript.includes('mani') || 
-        transcript.includes('hayırlı') ||
         transcript.includes('komi') || 
-        transcript.includes('hadi');
+        transcript.includes('hadi') ||
+        transcript.includes('mavi') ||
+        transcript.includes('moli') ||
+        transcript.includes('nuri') ||
+        transcript.includes('mona') ||
+        transcript.includes('monti') ||
+        transcript.includes('koli') ||
+        transcript.includes('bobi') ||
+        transcript.includes('huni') ||
+        transcript.includes('asistan') ||
+        transcript.includes('hayırlı');
 
       if (includesMoni) {
         console.log('Moni detected!');
         rec.stop();
         
         addBridgeLog("Uyandırma kelimesi algılandı: 'Moni'");
-        const isCustomEnabled = localStorage.getItem('moni_custom_voice_enabled') === 'true';
-        if (isCustomEnabled) {
-          const pitch = parseFloat(localStorage.getItem('moni_custom_voice_pitch') || '1.0');
-          const detune = parseInt(localStorage.getItem('moni_custom_voice_detune') || '0', 10);
-          const effect = localStorage.getItem('moni_custom_voice_effect') || 'none';
-          playCustomVoice(pitch, detune, effect);
-          addBridgeLog("Moni uyanıyor: Özel kadın sesi oynatılıyor...");
-          setTimeout(() => {
-            startCommandListening();
-          }, 1100);
-        } else {
-          speakText("Efendim? Sizi dinliyorum.", () => {
-            startCommandListening();
-          });
+        if ((window as any).moniAudioContext) {
+          playAssistantBeep((window as any).moniAudioContext);
         }
+        setTimeout(() => {
+          startCommandListening();
+        }, 250);
       }
     };
 
@@ -495,6 +495,7 @@ export const MoniDashboard: React.FC = () => {
       console.error('Wake Word recognition error:', event.error);
       if (event.error === 'not-allowed') {
         addBridgeLog("Mikrofon izni bekleniyor/engellendi. Lütfen tarayıcıda mikrofon iznini etkinleştirin.");
+        alert("Mikrofon izni bulunamadı. Lütfen tarayıcı ayarlarınızdan mikrofon erişimine izin verin.");
       }
     };
 
