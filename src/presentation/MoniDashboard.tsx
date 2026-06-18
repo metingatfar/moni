@@ -1127,7 +1127,90 @@ export const MoniDashboard: React.FC = () => {
           marginTop: '10px',
           position: 'relative'
         }}>
-          <MoniAvatar isSpeaking={isMoniSpeaking} isListening={isRecording} />
+          <div style={{
+            position: 'relative',
+            width: '100%',
+            height: '100%',
+            borderRadius: '50%',
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: isRecording 
+              ? '0 0 30px rgba(0, 240, 255, 0.5), inset 0 0 15px rgba(0, 240, 255, 0.3)' 
+              : isMoniSpeaking 
+                ? '0 0 30px rgba(157, 78, 221, 0.5), inset 0 0 15px rgba(157, 78, 221, 0.3)'
+                : 'none',
+            border: isRecording
+              ? '2px solid var(--accent-cyan)'
+              : isMoniSpeaking
+                ? '2px solid var(--accent-purple)'
+                : '2px solid rgba(255, 255, 255, 0.15)',
+            transition: 'all 0.4s ease'
+          }}>
+            {/* The beautiful female avatar image */}
+            <img 
+              src="/avatar_woman.png" 
+              alt="Moni Avatar" 
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                transform: isMoniSpeaking ? 'scale(1.05)' : 'scale(1)',
+                animation: isRecording 
+                  ? 'avatar-pulse 1.5s infinite ease-in-out' 
+                  : isMoniSpeaking 
+                    ? 'avatar-speak 0.4s infinite alternate ease-in-out' 
+                    : 'avatar-float 6s infinite ease-in-out',
+                transition: 'transform 0.3s ease'
+              }}
+            />
+
+            {/* Speaking animated overlay waves */}
+            {isMoniSpeaking && (
+              <div style={{
+                position: 'absolute',
+                bottom: '15px',
+                display: 'flex',
+                alignItems: 'flex-end',
+                gap: '3px',
+                height: '30px',
+                background: 'rgba(7, 8, 13, 0.6)',
+                padding: '6px 12px',
+                borderRadius: '12px',
+                backdropFilter: 'blur(4px)',
+                border: '1px solid rgba(157, 78, 221, 0.2)'
+              }}>
+                {[1, 2, 3, 4, 5].map((bar) => (
+                  <div 
+                    key={bar}
+                    style={{
+                      width: '3px',
+                      backgroundColor: 'var(--accent-purple)',
+                      boxShadow: '0 0 8px var(--accent-purple)',
+                      borderRadius: '3px',
+                      height: '100%',
+                      transformOrigin: 'bottom',
+                      animation: `speak-wave-${bar} 0.5s infinite alternate ease-in-out`
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Listening glowing radar ripple */}
+            {isRecording && (
+              <div style={{
+                position: 'absolute',
+                width: '100%',
+                height: '100%',
+                borderRadius: '50%',
+                border: '2px solid var(--accent-cyan)',
+                animation: 'radar-ripple 1.5s infinite linear',
+                pointerEvents: 'none'
+              }} />
+            )}
+          </div>
         </div>
 
         {/* Greeting Section */}
