@@ -1,0 +1,268 @@
+export interface SpeechVoice {
+  name: string;
+  gender: 'female' | 'male';
+  pitch: number;
+  rate: number;
+}
+
+export class VoiceService {
+  private static instance: VoiceService;
+  private voices: SpeechSynthesisVoice[] = [];
+
+  private constructor() {
+    this.loadVoices();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.onvoiceschanged = () => this.loadVoices();
+    }
+  }
+
+  public static getInstance(): VoiceService {
+    if (!VoiceService.instance) {
+      VoiceService.instance = new VoiceService();
+    }
+    return VoiceService.instance;
+  }
+
+  private loadVoices() {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      this.voices = window.speechSynthesis.getVoices();
+    }
+  }
+
+  public getAvailableTrVoices(): SpeechSynthesisVoice[] {
+    return this.voices.filter(v =>
+      v.lang.startsWith('tr') || v.lang.startsWith('tr-TR')
+    );
+  }
+  // Sunucumuzdan parça parça (Stream) gelen Gemini cevabını dinleyen fonksiyon
+  public async streamChat(message: string, onChunk: (text: string) => void, apiKey?: string): Promise<void> {
+    try {
+      const backendUrl = (import.meta.env && import.meta.env.VITE_BACKEND_API_URL) 
+        ? import.meta.env.VITE_BACKEND_API_URL.replace(/\/api$/, '') 
+        : 'http://localhost:5000';
+      const response = await fetch(`${backendUrl}/api/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message, apiKey }),
+      });
+
+      if (!response.body) throw new Error('ReadableStream desteklenmiyor.');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+
+        // Son eksik kalan satırı buffer'da tutuyoruz
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const cleanedLine = line.trim();
+          if (cleanedLine.startsWith('data: ')) {
+            try {
+              const jsonData = JSON.parse(cleanedLine.substring(6));
+              if (jsonData.text) {
+                // Gelen her kelimeyi anlık olarak arayüze/avatara fırlatıyoruz
+                onChunk(jsonData.text);
+              }
+            } catch (e) {
+              // JSON ayrıştırma hatası olursa es geç
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Canli akis esnasinda hata olustu:', error);
+    }
+  }
+
+  public async speak(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa', onEnd?: () => void) {
+    const apiKey = import.meta.env.VITE_GOOGLE_TTS_API_KEY || '';
+
+    if (apiKey.trim()) {
+      try {
+        let voiceName = 'tr-TR-Wavenet-C'; // Default female Wavenet
+        let gender = 'FEMALE';
+        let pitch = 0.0;
+        let speakingRate = 1.0;
+
+        switch (profile) {
+          case 'selin':
+            voiceName = 'tr-TR-Standard-A';
+            pitch = 1.0;
+            break;
+          case 'derin':
+            voiceName = 'tr-TR-Wavenet-C';
+            pitch = 2.0;
+            break;
+          case 'google-assistant':
+            voiceName = 'tr-TR-Wavenet-C'; // Google Assistant official high quality
+            pitch = 0.0;
+            break;
+          case 'gemini-vega':
+            voiceName = 'tr-TR-Wavenet-C';
+            pitch = 4.0; // Higher pitch
+            speakingRate = 1.05;
+            break;
+          case 'gemini-ursa':
+            voiceName = 'tr-TR-Wavenet-C';
+            pitch = -2.0; // Warmer pitch
+        }
+
+        const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            input: { text },
+            voice: { languageCode: 'tr-TR', name: voiceName, ssmlGender: gender },
+            audioConfig: { audioEncoding: 'MP3', pitch, speakingRate }
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Cloud TTS Error: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        if (data.audioContent) {
+          const audioUrl = `data:audio/mp3;base64,${data.audioContent}`;
+
+          let audio = (window as any).moniAudio;
+          if (!audio) {
+            audio = new Audio();
+            (window as any).moniAudio = audio;
+          }
+
+          audio.src = audioUrl;
+          audio.onended = () => {
+            if (onEnd) onEnd();
+          };
+          audio.onerror = () => {
+            if (onEnd) onEnd();
+          };
+
+          await audio.play();
+          return; // Success, exit speak method
+        }
+      } catch (e) {
+        console.error("Cloud TTS failed, falling back to local speech synthesis:", e);
+      }
+    }
+
+    // Use browser native SpeechSynthesis directly when there is no API key
+    this.speakWithLocalSpeechSynthesis(text, profile, onEnd);
+  }
+
+  private splitTextIntoChunks(text: string, maxLength: number): string[] {
+    const words = text.split(/\s+/);
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    for (const word of words) {
+      if ((currentChunk + ' ' + word).trim().length > maxLength) {
+        if (currentChunk.trim()) {
+          chunks.push(currentChunk.trim());
+        }
+        currentChunk = word;
+      } else {
+        currentChunk = (currentChunk + ' ' + word).trim();
+      }
+    }
+    if (currentChunk.trim()) {
+      chunks.push(currentChunk.trim());
+    }
+    return chunks;
+  }
+
+  private speakWithLocalSpeechSynthesis(text: string, profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa', onEnd?: () => void) {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      if (onEnd) onEnd();
+      return;
+    }
+
+    this.loadVoices(); // Refresh voices list
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'tr-TR';
+
+    const trVoices = this.voices.filter(v =>
+      v.lang.startsWith('tr') || v.lang.startsWith('tr-TR')
+    );
+    const femaleSystemVoices = trVoices.filter(v =>
+      v.name.toLowerCase().match(/(dilara|yelda|emel|seda|filiz|sibel|hazel|ayse|zeynep|yasemin|ipek|suna|female|bayan|woman|girl|voice)/)
+    );
+    const defaultVoice = trVoices[0] || this.voices[0] || null;
+
+    let targetVoice: SpeechSynthesisVoice | null = null;
+    let pitch = 1.0;
+    let rate = 1.0;
+
+    switch (profile) {
+      case 'selin':
+        targetVoice = trVoices.find(v => v.name.toLowerCase().includes('dilara')) || femaleSystemVoices[0] || defaultVoice;
+        pitch = 1.05;
+        rate = 1.0;
+        break;
+      case 'derin':
+        targetVoice = femaleSystemVoices.find(v => v.name.toLowerCase().includes('google')) || femaleSystemVoices[1] || femaleSystemVoices[0] || defaultVoice;
+        pitch = 1.25;
+        rate = 0.95;
+        break;
+      case 'google-assistant':
+        targetVoice = femaleSystemVoices.find(v => v.name.toLowerCase().includes('google')) || femaleSystemVoices[0] || defaultVoice;
+        pitch = 1.0;
+        rate = 1.02;
+        break;
+      case 'gemini-vega':
+        targetVoice = femaleSystemVoices.find(v => v.name.toLowerCase().includes('google')) || femaleSystemVoices[0] || defaultVoice;
+        pitch = 1.35;
+        rate = 0.98;
+        break;
+      case 'gemini-ursa':
+        targetVoice = femaleSystemVoices.find(v => v.name.toLowerCase().includes('google')) || femaleSystemVoices[0] || defaultVoice;
+        pitch = 0.92;
+        rate = 0.90;
+        break;
+    }
+
+    const hasFemaleSystemVoice = femaleSystemVoices.length > 0;
+
+    if (targetVoice) {
+      const nameLower = targetVoice.name.toLowerCase();
+      const isActuallyMale = nameLower.match(/(tolga|cem|male|hakan)/);
+
+      if ((profile === 'selin' || profile === 'derin' || profile === 'google-assistant' || profile === 'gemini-vega' || profile === 'gemini-ursa') && (!hasFemaleSystemVoice || isActuallyMale)) {
+        if (profile === 'selin') pitch = 1.55;
+        else if (profile === 'derin') pitch = 1.75;
+        else if (profile === 'google-assistant') pitch = 1.5;
+        else if (profile === 'gemini-vega') pitch = 1.85;
+        else if (profile === 'gemini-ursa') pitch = 1.30;
+      }
+
+      utterance.voice = targetVoice;
+    }
+
+    utterance.pitch = pitch;
+    utterance.rate = rate;
+
+    if (onEnd) {
+      utterance.onend = () => onEnd();
+      utterance.onerror = () => onEnd();
+    }
+
+    window.speechSynthesis.speak(utterance);
+  }
+}
+export const voiceService = VoiceService.getInstance();

@@ -11,9 +11,6 @@ import type { Note } from '../domain/entities/Note';
 import type { Todo } from '../domain/entities/Todo';
 import type { MemoryItem, MemoryCategory } from '../domain/entities/MemoryItem';
 import { MemoryService } from '../memory/MemoryService';
-import { brainService } from '../brain/BrainService';
-import { SecretaryService } from '../secretary/SecretaryService';
-import { DateParserHelper } from '../secretary/DateParserHelper';
 
 // const aiService = new LocalAiService();
 const bridgeService = new NativeBridge();
@@ -22,7 +19,7 @@ export const MoniDashboard: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isOffline, setIsOffline] = useState(false);
-  const [avatarType, setAvatarType] = useState<'image' | 'svg'>(() => {
+  const [avatarType] = useState<'image' | 'svg'>(() => {
     return (localStorage.getItem('moni_avatar_type') as 'image' | 'svg') || 'image';
   });
   const [eyeColor, setEyeColor] = useState<string>(() => {
@@ -71,64 +68,6 @@ export const MoniDashboard: React.FC = () => {
     return localStorage.getItem('moni_speech_voice_name') || '';
   });
   const [currentlySpeakingMsgId, setCurrentlySpeakingMsgId] = useState<string | null>(null);
-
-  // Live Avatar Engine states
-  const [avatarAnimationsEnabled, setAvatarAnimationsEnabled] = useState<boolean>(() => {
-    return localStorage.getItem('moni_avatar_animations_enabled') !== 'false';
-  });
-  const [avatarMouthAnimationEnabled, setAvatarMouthAnimationEnabled] = useState<boolean>(() => {
-    return localStorage.getItem('moni_avatar_mouth_animation_enabled') !== 'false';
-  });
-  const [avatarEffectsIntensity, setAvatarEffectsIntensity] = useState<'low' | 'medium' | 'high'>(() => {
-    return (localStorage.getItem('moni_avatar_effects_intensity') as 'low' | 'medium' | 'high') || 'medium';
-  });
-  const [avatarMood, setAvatarMood] = useState<'neutral' | 'happy' | 'focused' | 'thinking' | 'alert'>('neutral');
-
-  // Executive Dashboard states
-  const [isDashboard2Enabled, setIsDashboard2Enabled] = useState<boolean>(() => {
-    return localStorage.getItem('moni_is_dashboard2_enabled') !== 'false';
-  });
-  const [dailyBriefText, setDailyBriefText] = useState('Analiz ediliyor, gün özeti hazırlanıyor...');
-  const [recommendations, setRecommendations] = useState<string[]>([]);
-  const [scoredTodos, setScoredTodos] = useState<any[]>([]);
-  const [activeProjectsList, setActiveProjectsList] = useState<string[]>([]);
-  const [isGeneratingBrief, setIsGeneratingBrief] = useState(false);
-  const [pendingSecretaryCommand, setPendingSecretaryCommand] = useState<any | null>(null);
-  const [audioNotification, setAudioNotification] = useState<string | null>(null);
-  const [backendHealth, setBackendHealth] = useState<{ checked: boolean; ok: boolean; hasKey: boolean }>({
-    checked: false,
-    ok: false,
-    hasKey: false
-  });
-  
-  const showAudioNotification = (message: string) => {
-    setAudioNotification(message);
-    setTimeout(() => {
-      setAudioNotification(prev => prev === message ? null : prev);
-    }, 6000);
-  };
-
-  const checkBackendHealth = async () => {
-    const base = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:5000/api";
-    const apiBase = base.endsWith("/api") ? base : `${base.replace(/\/$/, '')}/api`;
-    const url = `${apiBase}/health`;
-    
-    try {
-      const response = await fetch(url);
-      if (response.ok) {
-        const data = await response.json();
-        setBackendHealth({ checked: true, ok: data.ok, hasKey: data.openaiKey });
-        console.log(`[MONI TTS] OPENAI_API_KEY mevcut: ${data.openaiKey}`);
-      } else {
-        setBackendHealth({ checked: true, ok: false, hasKey: false });
-        console.warn(`[MONI TTS] Sağlık kontrolü başarısız: ${response.status}`);
-      }
-    } catch (e: any) {
-      setBackendHealth({ checked: true, ok: false, hasKey: false });
-      console.warn(`[MONI TTS] Sağlık kontrolü bağlantı hatası: ${e.message}`);
-    }
-  };
-
 
   // Note form fields
   const [newNoteTitle, setNewNoteTitle] = useState('');
@@ -346,11 +285,6 @@ export const MoniDashboard: React.FC = () => {
   const isWakeRecognitionActiveRef = useRef<boolean>(false);
   const isSpeakingRef = useRef<boolean>(false);
   const lastWakeStartRef = useRef<number>(0);
-  // Tracks the active command-listening SpeechRecognition instance
-  const commandRecRef = useRef<any>(null);
-  // Set to true when the app intentionally stops STT (manual stop, TTS start).
-  // Prevents the onerror 'aborted' event from showing an error toast.
-  const manuallyStoppedRef = useRef<boolean>(false);
 
   // Initialize data
   useEffect(() => {
@@ -365,83 +299,15 @@ export const MoniDashboard: React.FC = () => {
       }
     }
 
-    // Helper: detect if a voice name matches male/erkek patterns
-    const isMaleVoice = (name: string) =>
-      /tolga|cem|hakan|sabri|huseyin|male|erkek|man|boy/i.test(name);
-
-    // Helper: detect female voice candidates
-    const isFemaleTurkish = (v: SpeechSynthesisVoice) => {
-      const name = v.name.toLowerCase();
-      const lang = v.lang.toLowerCase().replace('_', '-');
-      const isTr = lang.startsWith('tr') || lang.includes('tr');
-      const hasFemaleIndicator = /dilara|yelda|emel|seda|filiz|sibel|hazel|ayse|zeynep|yasemin|ipek|suna|female|bayan|woman|girl|siri|her/i.test(name);
-      const noMaleIndicator = !isMaleVoice(name);
-      // "Google Türkçe" or generic Turkish without male marker is treated as female
-      const isGoogleTurkish = isTr && name.includes('google');
-      return isTr && (hasFemaleIndicator || isGoogleTurkish) && noMaleIndicator;
-    };
-
-    let retryCount = 0;
     const loadVoices = () => {
       if ('speechSynthesis' in window) {
         const voices = window.speechSynthesis.getVoices();
-        
-        if (voices.length === 0 && retryCount < 5) {
-          retryCount++;
-          console.log(`[Moni UI] Ses listesi boş, yeniden yükleniyor (Deneme ${retryCount}/5)...`);
-          setTimeout(loadVoices, 500);
-          return;
-        }
-
-        if (voices.length === 0) {
-          console.warn('[Moni UI] Cihazda sesli okuma motoru bulunamadı, metin modu aktif.');
-          showAudioNotification('Bu cihazda sesli okuma motoru bulunamadı, metin modu aktif.');
-        }
-
-        // === Smart voice sorting ===
-        // Priority: 1) TR female  2) TR generic (Google TR)  3) TR male  4) other  5) male others last
-        const scoreVoice = (v: SpeechSynthesisVoice): number => {
-          const name = v.name.toLowerCase();
-          const lang = v.lang.toLowerCase().replace('_', '-');
-          const isTr = lang.startsWith('tr') || lang.includes('tr');
-          const isMale = isMaleVoice(name);
-          const isFemTr = isFemaleTurkish(v);
-          if (isFemTr) return 0;           // TR female — top priority
-          if (isTr && !isMale) return 1;   // TR generic / Google TR
-          if (isTr && isMale) return 2;    // TR male
-          if (!isTr && !isMale) return 3;  // Other non-male
-          return 4;                         // Male non-TR — last
-        };
-
-        const sorted = [...voices].sort((a, b) => {
-          const scoreDiff = scoreVoice(a) - scoreVoice(b);
-          if (scoreDiff !== 0) return scoreDiff;
-          return a.name.localeCompare(b.name);
-        });
-        setTrVoicesList(sorted);
-
-        // Auto-fix: if saved system voice is male, clear it so TTS engine picks female automatically
-        const savedVoiceName = localStorage.getItem('moni_speech_voice_name') || '';
-        if (savedVoiceName && isMaleVoice(savedVoiceName)) {
-          console.warn(`[Moni UI] Kayıtlı ses erkek (${savedVoiceName}), otomatik kadın/Türkçe sese geçiliyor.`);
-          localStorage.removeItem('moni_speech_voice_name');
-          setSelectedSystemVoiceName('');
-        }
-
-        // OpenAI TTS artık her cihazda aynı kaliteli sesi sağlıyor.
-        // Türkçe kadın sesi olmasa da kullanıcıya uyarı gösterme — sadece konsola logla.
-        const hasFemaleTr = voices.some(isFemaleTurkish);
-        if (!hasFemaleTr && voices.length > 0) {
-          console.info('[Moni UI] Cihazda Türkçe kadın sesi bulunamadı — OpenAI TTS fallback aktif.');
-        }
-      } else {
-        // SpeechSynthesis not supported — OpenAI TTS still works, only log
-        console.warn('[Moni UI] Tarayıcı SpeechSynthesis desteklemiyor — OpenAI TTS kullanılacak.');
+        const tr = voices.filter(v => v.lang.startsWith('tr') || v.lang.startsWith('tr-TR') || v.lang.toLowerCase().includes('tr'));
+        setTrVoicesList(tr);
       }
     };
 
     loadVoices();
-    checkBackendHealth();
     if ('speechSynthesis' in window) {
       window.speechSynthesis.onvoiceschanged = loadVoices;
     }
@@ -545,68 +411,11 @@ export const MoniDashboard: React.FC = () => {
         // Refresh reminders state
         const refreshed = await databaseService.getReminders();
         setReminders(refreshed);
-        refreshExecutiveStatus(todos, refreshed, memories);
       }
     }, 15000); // Check every 15 seconds
 
     return () => clearInterval(checkAlarmInterval);
   }, [activeAlarm, reminders, selectedVoice]);
-
-  const refreshExecutiveStatus = async (
-    currentTodos: Todo[],
-    currentReminders: Reminder[],
-    currentMemories: MemoryItem[]
-  ) => {
-    setIsGeneratingBrief(true);
-    try {
-      const status = await brainService.getExecutiveStatus(
-        currentTodos,
-        currentReminders,
-        currentMemories,
-        geminiApiKey || undefined
-      );
-      setDailyBriefText(status.dailyBrief);
-      setRecommendations(status.recommendations);
-      setScoredTodos(status.scoredTodos);
-      setActiveProjectsList(status.activeProjects);
-    } catch (err) {
-      console.error("Executive status update error:", err);
-      addBridgeLog("Executive Brain güncelleme hatası.");
-    } finally {
-      setIsGeneratingBrief(false);
-    }
-  };
-
-  const handleSpeakDailyBrief = () => {
-    if (currentlySpeakingMsgId === 'daily-brief') {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      let audio = (window as any).moniAudio;
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
-      setCurrentlySpeakingMsgId(null);
-      setMoniStatus('idle');
-      setAvatarMood('neutral');
-      isSpeakingRef.current = false;
-      addBridgeLog("Brifing seslendirmesi durduruldu.");
-    } else {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      let audio = (window as any).moniAudio;
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
-      setCurrentlySpeakingMsgId('daily-brief');
-      speakText(dailyBriefText, () => {
-        setCurrentlySpeakingMsgId(null);
-      });
-    }
-  };
 
   const loadDatabaseData = async () => {
     const loadedContacts = await databaseService.getContacts();
@@ -633,9 +442,6 @@ export const MoniDashboard: React.FC = () => {
       setMessages([initialMsg]);
       await databaseService.saveChatMessage(initialMsg);
     }
-
-    // Trigger initial executive status analyze
-    await refreshExecutiveStatus(loadedTodos, loadedReminders, loadedMemories);
   };
 
   useEffect(() => {
@@ -647,53 +453,14 @@ export const MoniDashboard: React.FC = () => {
     setBridgeLogs(prev => [`[${timestamp}] ${message}`, ...prev.slice(0, 19)]);
   };
 
-  /**
-   * showTemporaryError — Recoverable audio/STT/AI errors only.
-   * Shows error badge on avatar for 3.5 s then auto-resets to idle/neutral.
-   * Also shows a toast notification. NEVER use for critical boot failures.
-   */
-  const showTemporaryError = (toastMessage: string, bridgeLogMsg?: string) => {
-    setMoniStatus('error');
-    setAvatarMood('alert');
-    showAudioNotification(toastMessage);
-    if (bridgeLogMsg) addBridgeLog(bridgeLogMsg);
-    setTimeout(() => {
-      setMoniStatus(prev => prev === 'error' ? 'idle' : prev);
-      setAvatarMood(prev => prev === 'alert' ? 'neutral' : prev);
-    }, 3500);
-  };
-
-  type SpeakMode = "wake" | "command" | "none";
-
-  const speakText = (
-    text: string,
-    callback?: () => void,
-    voiceOverride?: string,
-    restartMode: SpeakMode = "wake"
-  ) => {
-    // Stop any active STT sessions before starting TTS to avoid 'aborted' collision
-    if (commandRecRef.current) {
-      try {
-        manuallyStoppedRef.current = true;
-        commandRecRef.current.stop();
-      } catch (_) {}
-      commandRecRef.current = null;
-      setIsRecording(false);
-    }
-    if (wakeRecognitionRef.current) {
-      try {
-        wakeRecognitionRef.current.stop();
-      } catch (_) {}
-      isWakeRecognitionActiveRef.current = false;
-    }
-
+  const speakText = (text: string, callback?: () => void, voiceOverride?: string) => {
     isSpeakingRef.current = true;
     setMoniStatus('speaking');
-    setAvatarMood('happy');
     const activeVoiceType = (voiceOverride || selectedVoice) as any;
 
     // Add bridge log indicating which engine is being used
-    addBridgeLog(`Seslendirme (OpenAI TTS / Nova): "${text.slice(0, 30)}..."`);
+    const hasApiKey = !!(import.meta.env.VITE_GOOGLE_TTS_API_KEY);
+    addBridgeLog(`Seslendirme (${hasApiKey ? 'Google Cloud API' : 'Yerel Tarayıcı Motoru'}): "${text.slice(0, 30)}..."`);
 
     const options = {
       rate: speechRate,
@@ -701,44 +468,11 @@ export const MoniDashboard: React.FC = () => {
       voiceName: selectedSystemVoiceName || undefined
     };
 
-    voiceService.speak(
-      text,
-      activeVoiceType,
-      () => {
-        isSpeakingRef.current = false;
-        setMoniStatus('idle');
-        setAvatarMood('neutral');
-        if (callback) callback();
-
-        // Reset manuallyStoppedRef to ensure STT is allowed to auto-restart
-        manuallyStoppedRef.current = false;
-
-        setTimeout(() => {
-          if (
-            !isSpeakingRef.current &&
-            !manuallyStoppedRef.current &&
-            !commandRecRef.current
-          ) {
-            if (restartMode === "wake" && isWakeWordListening) {
-              startWakeWordRecognition();
-            } else if (restartMode === "command") {
-              startCommandListening();
-            }
-          }
-        }, 500);
-      },
-      options,
-      (errMessage: string) => {
-        isSpeakingRef.current = false;
-        // TTS error — show toast + brief avatar alert, then auto-reset to idle.
-        // Does NOT leave permanent error state on dashboard.
-        showTemporaryError(
-          `Seslendirme yapılamadı: ${errMessage}`,
-          `Seslendirme Hatası: ${errMessage}`
-        );
-        if (callback) callback();
-      }
-    );
+    voiceService.speak(text, activeVoiceType, () => {
+      isSpeakingRef.current = false;
+      setMoniStatus('idle');
+      if (callback) callback();
+    }, options);
   };
 
   const handleSpeakMessage = (text: string, msgId: string) => {
@@ -753,7 +487,6 @@ export const MoniDashboard: React.FC = () => {
       }
       setCurrentlySpeakingMsgId(null);
       setMoniStatus('idle');
-      setAvatarMood('neutral');
       isSpeakingRef.current = false;
       addBridgeLog("Seslendirme durduruldu.");
     } else {
@@ -772,29 +505,12 @@ export const MoniDashboard: React.FC = () => {
     }
   };
 
-  // Screen Wake Lock reference to prevent mobile screen sleep
-  const wakeLockRef = useRef<any>(null);
-
-  const requestWakeLock = async () => {
-    if ('wakeLock' in navigator) {
-      try {
-        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-        console.log('[Moni WakeLock] Ekran kilidi aktif edildi, ekran kapanmayacak.');
-      } catch (err: any) {
-        console.warn(`[Moni WakeLock] Ekran kilidi etkinleştirilemedi: ${err.message}`);
-      }
-    }
-  };
-
   const startWakeWordRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       addBridgeLog('Hata: Tarayıcınız ses tanımayı desteklemiyor.');
       return;
     }
-
-    // Try to acquire Wake Lock on mobile devices
-    requestWakeLock();
 
     if (wakeRecognitionRef.current) {
       try {
@@ -816,27 +532,33 @@ export const MoniDashboard: React.FC = () => {
       console.log('Moni WakeWord dinleme:', transcript);
 
       const includesMoni =
-        transcript === 'moni' ||
-        transcript === 'boni' ||
-        transcript.includes('moni dinle') ||
-        transcript.includes('hey moni') ||
-        transcript.includes('merhaba moni') ||
-        transcript.endsWith('moni');
+        transcript.includes('moni') ||
+        transcript.includes('boni') ||
+        transcript.includes('mani') ||
+        transcript.includes('komi') ||
+        transcript.includes('hadi') ||
+        transcript.includes('mavi') ||
+        transcript.includes('moli') ||
+        transcript.includes('nuri') ||
+        transcript.includes('mona') ||
+        transcript.includes('monti') ||
+        transcript.includes('koli') ||
+        transcript.includes('bobi') ||
+        transcript.includes('huni') ||
+        transcript.includes('asistan') ||
+        transcript.includes('hayırlı');
 
       if (includesMoni) {
-        console.log('Moni detected via wake word!');
+        console.log('Moni detected!');
         rec.stop();
-        isWakeRecognitionActiveRef.current = false;
 
-        addBridgeLog("Moni uyanıyor...");
+        addBridgeLog("Uyandırma kelimesi algılandı: 'Moni'");
         if ((window as any).moniAudioContext) {
           playAssistantBeep((window as any).moniAudioContext);
         }
-        
-        // Speak "Buyurun, sizi dinliyorum." then start command listening automatically via SpeakMode
-        setMoniStatus('speaking');
-        setAvatarMood('happy');
-        speakText("Buyurun, sizi dinliyorum.", undefined, undefined, "command");
+        setTimeout(() => {
+          startCommandListening();
+        }, 550);
       }
     };
 
@@ -847,14 +569,10 @@ export const MoniDashboard: React.FC = () => {
 
     rec.onerror = (event: any) => {
       isWakeRecognitionActiveRef.current = false;
-      const err = event.error;
-      if (err === 'aborted') {
-        console.log('[MONI WakeWord] Dinleme oturumu kapatıldı (aborted).');
-        return;
-      }
-      console.error('Wake Word recognition error:', err);
-      if (err === 'not-allowed') {
+      console.error('Wake Word recognition error:', event.error);
+      if (event.error === 'not-allowed') {
         addBridgeLog("Mikrofon izni bekleniyor/engellendi. Lütfen tarayıcıda mikrofon iznini etkinleştirin.");
+        alert("Mikrofon izni bulunamadı. Lütfen tarayıcı ayarlarınızdan mikrofon erişimine izin verin.");
       }
     };
 
@@ -889,138 +607,62 @@ export const MoniDashboard: React.FC = () => {
   const startCommandListening = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      showTemporaryError(
-        'Tarayıcınız sesli komutları (STT) desteklemiyor. Lütfen Chrome veya Safari kullanın.',
-        'Hata: Tarayıcınız ses tanımayı desteklemiyor.'
-      );
+      setMoniStatus('error');
+      addBridgeLog('Hata: Tarayıcınız ses tanımayı desteklemiyor.');
       alert('Tarayıcınız ses tanımayı (STT) desteklemiyor. Lütfen Google Chrome veya Safari gibi uyumlu bir tarayıcı kullanın.');
       return;
     }
 
-    if (isSpeakingRef.current) {
-      addBridgeLog('TTS aktif, STT başlatılmadı.');
-      return;
-    }
-
-    console.log('[MONI COMMAND] Komut dinleme başladı');
-
-    if (commandRecRef.current) {
-      try {
-        manuallyStoppedRef.current = true;
-        commandRecRef.current.stop();
-      } catch (_) {}
-      commandRecRef.current = null;
-    }
-
     setIsRecording(true);
     setMoniStatus('listening');
-    setAvatarMood('neutral');
     addBridgeLog('Moni dinliyor: Komutunuzu söyleyin...');
 
     const rec = new SpeechRecognition();
     rec.continuous = false;
     rec.interimResults = false;
     rec.lang = 'tr-TR';
-    commandRecRef.current = rec;
-    manuallyStoppedRef.current = false;
-
-    // 5-second silence timeout
-    const silenceTimeout = setTimeout(() => {
-      console.log('[MONI COMMAND] 5 saniye boyunca ses algılanmadı, wake mode’a dönülüyor');
-      try {
-        manuallyStoppedRef.current = true;
-        rec.stop();
-      } catch (_) {}
-      setIsRecording(false);
-      commandRecRef.current = null;
-      speakText("Sizi duyamadım, tekrar Moni diyebilirsiniz.", undefined, undefined, "wake");
-    }, 5000);
 
     rec.onresult = (event: any) => {
-      clearTimeout(silenceTimeout);
       const command = event.results[0][0].transcript;
-      console.log('[MONI COMMAND] Transcript:', command);
-      console.log('[MONI COMMAND] Final command:', command);
       addBridgeLog(`Ses Algılandı (STT): "${command}"`);
-
-      // Stop recognition immediately after capture
-      try {
-        manuallyStoppedRef.current = true;
-        rec.stop();
-      } catch (_) {}
-      setIsRecording(false);
-      commandRecRef.current = null;
-
-      if (command.trim()) {
-        console.log('[MONI COMMAND] AI cevap isteniyor');
+      
+      if (autoSubmitEnabled) {
         setMoniStatus('thinking');
-        setAvatarMood('thinking');
         handleSendMessage(command);
       } else {
+        setInputMessage(command);
         setMoniStatus('idle');
-        setAvatarMood('neutral');
-        if (isWakeWordListening) startWakeWordRecognition();
       }
     };
 
     rec.onerror = (event: any) => {
-      clearTimeout(silenceTimeout);
-      const errCode: string = event.error;
-      console.log('[MONI STT] onerror:', errCode, '| manuallyStoped:', manuallyStoppedRef.current);
-
+      console.error('Command recognition error:', event.error);
       setIsRecording(false);
-
-      if (errCode === 'aborted' || manuallyStoppedRef.current) {
-        console.log('[MONI STT] Dinleme oturumu uygulama tarafından kapatıldı — hata gösterilmiyor.');
-        manuallyStoppedRef.current = false;
-        return;
-      }
-
-      if (errCode === 'no-speech') {
-        addBridgeLog('Ses algılanamadı, bekleme moduna dönüldü.');
-        setMoniStatus('idle');
-        setAvatarMood('neutral');
-      } else if (errCode === 'not-allowed') {
-        showTemporaryError(
-          'Mikrofon izni verilmedi. Tarayıcı ayarlarından mikrofon iznini açın.',
-          'Hata: Mikrofon izni engellendi.'
-        );
-      } else if (errCode === 'audio-capture') {
-        showTemporaryError(
-          'Mikrofon bulunamadı veya kullanılamıyor. Bağlantıyı kontrol edin.',
-          'Hata: Mikrofon donanımı bulunamadı.'
-        );
+      setMoniStatus('error');
+      
+      if (event.error === 'not-allowed') {
+        alert("Mikrofon izni verilmedi. Lütfen tarayıcı ayarlarından mikrofonunuza izin verin.");
+        addBridgeLog("Hata: Mikrofon izni engellendi.");
       } else {
-        showTemporaryError(
-          `Ses tanıma sorunu: ${errCode}. Lütfen tekrar deneyin.`,
-          `Ses Tanıma Hatası: ${errCode}`
-        );
+        addBridgeLog(`Ses Tanıma Hatası: ${event.error}`);
       }
-
+      
       if (isWakeWordListening) {
         startWakeWordRecognition();
       }
     };
 
     rec.onend = () => {
-      clearTimeout(silenceTimeout);
       setIsRecording(false);
-      commandRecRef.current = null;
       setMoniStatus(prev => (prev === 'listening' ? 'idle' : prev));
-      setAvatarMood(prev => (prev === 'neutral' || prev === 'alert' ? 'neutral' : prev));
     };
 
     try {
       rec.start();
     } catch (e) {
-      clearTimeout(silenceTimeout);
       console.error('Failed to start command listening:', e);
       setIsRecording(false);
-      commandRecRef.current = null;
-      showTemporaryError(
-        'Ses tanıma başlatılamadı. Lütfen tekrar deneyin.',
-        'Ses tanıma başlatılamadı.'
-      );
+      setMoniStatus('error');
     }
   };
 
@@ -1040,135 +682,8 @@ export const MoniDashboard: React.FC = () => {
     // Check commands
     const textLower = text.toLowerCase();
 
-    // === Sprint 2: Secretary Engine Processing ===
-    
-    // Helper to load fresh DB data, trigger dashboard updates
-    const refreshDashboardData = async () => {
-      const loadedTodos = await databaseService.getTodos();
-      const loadedReminders = await databaseService.getReminders();
-      const loadedNotes = await databaseService.getNotes();
-      setTodos(loadedTodos);
-      setReminders(loadedReminders);
-      setNotes(loadedNotes);
-      await refreshExecutiveStatus(loadedTodos, loadedReminders, memories);
-    };
-
-    // Helper to send assistant reply, speak it, and handle wake word restart
-    const sendAssistantReply = async (replyText: string) => {
-      const replyMsg: Message = {
-        role: 'assistant',
-        content: replyText,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, replyMsg]);
-      await databaseService.saveChatMessage(replyMsg);
-      speakText(replyText, () => {
-        if (isWakeWordListening) startWakeWordRecognition();
-      });
-    };
-
-    // A. Check if there's a pending command awaiting confirmation or date clarification
-    if (pendingSecretaryCommand) {
-      const pending = pendingSecretaryCommand;
-      setPendingSecretaryCommand(null); // Clear it immediately to avoid loops
-
-      if (pending.waitingFor === 'confirmation') {
-        const isYes = [
-          'evet', 'tamam', 'olur', 'ekle', 'kaydet', 'onaylıyorum', 'onayliyorum', 'yes', 'onayla'
-        ].some(word => textLower.includes(word));
-
-        if (isYes) {
-          // The user confirmed! Save the data
-          addBridgeLog(`Sekreter: Kullanıcı onayı alındı. Kayıt yapılıyor...`);
-          try {
-            const result = await SecretaryService.saveCommand(pending.type, pending.data, memories.find(m => m.category === 'name')?.content || 'Metin');
-            await refreshDashboardData();
-            await sendAssistantReply(result.message);
-          } catch (err) {
-            console.error("Failed to save confirmed secretary command:", err);
-            await sendAssistantReply("Üzgünüm, kaydı yaparken bir hata oluştu.");
-          }
-          return;
-        } else {
-          // The user cancelled or said something else
-          addBridgeLog(`Sekreter: Kullanıcı onayı reddedildi veya anlaşılamadı.`);
-          await sendAssistantReply("Anlaşıldı, işlemi iptal ettim.");
-          return;
-        }
-      }
-
-      if (pending.waitingFor === 'date_clarification') {
-        // The user is providing the date/time info
-        const clarifiedDate = DateParserHelper.parse(text);
-        if (clarifiedDate) {
-          // Date extracted successfully! Update and check if we now need confirmation or can save
-          const updatedData = { ...pending.data, dateTime: clarifiedDate };
-          
-          // Present a confirmation request with the clarified date
-          const friendlyDate = SecretaryService.formatTurkishFriendlyDate(clarifiedDate);
-          const typeLabels: Record<string, string> = { task: 'görev', reminder: 'hatırlatıcı', meeting: 'toplantı', note: 'not' };
-          const label = typeLabels[pending.type] || 'etkinlik';
-          
-          const newPending = {
-            ...pending,
-            data: updatedData,
-            waitingFor: 'confirmation' as const
-          };
-          setPendingSecretaryCommand(newPending);
-          
-          let message = `Tamamdır. Bunu ${friendlyDate} için ${label} olarak eklememi ister misiniz?`;
-          if (pending.type === 'task' && updatedData.project) {
-            message = `Tamamdır. Bunu ${friendlyDate} için ${updatedData.project} projesine görev olarak eklememi onaylıyor musunuz?`;
-          }
-          
-          await sendAssistantReply(message);
-          return;
-        } else {
-          // Still couldn't parse date
-          await sendAssistantReply("Tarih veya saati tam anlayamadım. Hangi gün ve saatte planlamak istersiniz? (İptal etmek isterseniz 'iptal' diyebilirsiniz)");
-          // Keep waiting for date clarification
-          setPendingSecretaryCommand(pending);
-          return;
-        }
-      }
-    }
-
-    // B. Route new command
-    const activeProjects = memories.filter(m => m.category === 'projects').map(m => m.content.trim());
-    const userName = memories.find(m => m.category === 'name')?.content || 'Metin';
-    
-    addBridgeLog("Sekreter niyet tahlili yapılıyor...");
-    const secretaryResult = await SecretaryService.processCommand(
-      text,
-      activeProjects,
-      userName,
-      geminiApiKey || undefined
-    );
-
-    if (secretaryResult.type !== 'chat') {
-      // It is a secretary command!
-      if (secretaryResult.waitingFor) {
-        // Needs confirmation or clarification
-        setPendingSecretaryCommand({
-          type: secretaryResult.type,
-          data: secretaryResult.data,
-          originalText: text,
-          waitingFor: secretaryResult.waitingFor
-        });
-        await sendAssistantReply(secretaryResult.message);
-      } else if (secretaryResult.success) {
-        // Direct save completed successfully
-        await refreshDashboardData();
-        await sendAssistantReply(secretaryResult.message);
-      } else {
-        await sendAssistantReply("Üzgünüm, komutu işlerken bir sorun oluştu.");
-      }
-      return;
-    }
-
     // Memory Engine Triggers: Save / Remember (Explicit triggers only)
     if (MemoryService.shouldSaveMemory(text)) {
-      setAvatarMood('focused');
       addBridgeLog(`Hafıza tetiklendi: Bilgi ayıklanıyor...`);
       const extracted = await MemoryService.extractMemoryFromText(text, geminiApiKey);
       if (extracted) {
@@ -1181,7 +696,6 @@ export const MoniDashboard: React.FC = () => {
         await databaseService.saveMemory(newMemory);
         const updatedMemories = await databaseService.getMemories();
         setMemories(updatedMemories);
-        refreshExecutiveStatus(todos, reminders, updatedMemories);
         addBridgeLog(`Hafızaya eklendi: [${newMemory.category}] -> "${newMemory.content}"`);
 
         const categoryNames: Record<MemoryCategory, string> = {
@@ -1287,7 +801,6 @@ export const MoniDashboard: React.FC = () => {
       if (textLower.includes('tüm') || textLower.includes('hepsini') || textLower.includes('hafızayı temizle') || textLower.includes('hafızamı temizle')) {
         await databaseService.clearMemories();
         setMemories([]);
-        refreshExecutiveStatus(todos, reminders, []);
         addBridgeLog(`Tüm hafıza veritabanından silindi.`);
         const responseMsg: Message = {
           role: 'assistant',
@@ -1406,7 +919,6 @@ export const MoniDashboard: React.FC = () => {
       await databaseService.saveReminder(newReminder);
       const loadedReminders = await databaseService.getReminders();
       setReminders(loadedReminders);
-      refreshExecutiveStatus(todos, loadedReminders, memories);
       addBridgeLog(`Veritabanı güncellendi: Hatırlatıcı eklendi -> ${title}`);
 
       const responseMsg: Message = {
@@ -1566,7 +1078,6 @@ export const MoniDashboard: React.FC = () => {
       await databaseService.saveReminder(newReminder);
       const updatedReminders = await databaseService.getReminders();
       setReminders(updatedReminders);
-      refreshExecutiveStatus(todos, updatedReminders, memories);
       addBridgeLog(`Veritabanı güncellendi: Randevu eklendi -> ${title} (${targetDate.toLocaleString('tr-TR')})`);
 
       const dateStr = targetDate.toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -1622,7 +1133,6 @@ export const MoniDashboard: React.FC = () => {
       await databaseService.saveTodo(newTodo);
       const updatedTodos = await databaseService.getTodos();
       setTodos(updatedTodos);
-      refreshExecutiveStatus(updatedTodos, reminders, memories);
       addBridgeLog(`Veritabanı güncellendi: Görev eklendi -> ${task}`);
 
       const responseMsg: Message = {
@@ -1641,7 +1151,6 @@ export const MoniDashboard: React.FC = () => {
     // Default AI response - CANLI AKIS (STREAM) MODU
     try {
       setMoniStatus('thinking');
-      setAvatarMood('thinking');
       // 1. Ekranda bos bir asistan mesaji olusturuyoruz ki kelimeler geldikce icini dolduralim
       const newMsgId = 'assistant-' + Date.now();
       const streamingAssistantMsg: Message = {
@@ -1688,23 +1197,16 @@ export const MoniDashboard: React.FC = () => {
         speakText(accumulatedText, () => {
           setCurrentlySpeakingMsgId(null);
           setMoniStatus('idle');
-          setAvatarMood('neutral');
-        }, undefined, "wake");
+          if (isWakeWordListening) startWakeWordRecognition();
+        });
       } else {
         setMoniStatus('idle');
-        setAvatarMood('neutral');
         if (isWakeWordListening) startWakeWordRecognition();
       }
 
     } catch (e) {
       console.error('Canli akis guncellemesinde hata olustu:', e);
-      // Stream error — show toast + brief avatar alert, then auto-reset to idle
-      showTemporaryError(
-        'Yanıt alınırken bir sorun oluştu. Lütfen tekrar deneyin.',
-        'Akış yanıt hatası — idle durumuna dönülüyor.'
-      );
-      setCurrentlySpeakingMsgId(null);
-      isSpeakingRef.current = false;
+      setMoniStatus('error');
     }
   };
 
@@ -1735,24 +1237,9 @@ export const MoniDashboard: React.FC = () => {
   const handleMicClick = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-    // If already recording — stop the current session cleanly
-    if (isRecording && commandRecRef.current) {
-      manuallyStoppedRef.current = true;
-      try { commandRecRef.current.stop(); } catch (_) {}
-      commandRecRef.current = null;
-      setIsRecording(false);
-      setMoniStatus('idle');
-      setAvatarMood('neutral');
-      addBridgeLog('Sesli komut modu kullanıcı tarafından durduruldu.');
-      return;
-    }
-
     if (!SpeechRecognition) {
-      // STT not supported — brief transient error indicator, then show sim mode
-      showTemporaryError(
-        'Tarayıcınız sesli komutları (Web Speech API) desteklemiyor. Chrome veya Edge kullanın.',
-        'Hata: Web Speech API tarayıcınızda desteklenmiyor.'
-      );
+      setMoniStatus('error');
+      addBridgeLog('Hata: Web Speech API tarayıcınızda desteklenmiyor.');
       alert('Tarayıcınız ses tanımayı (Web Speech API) desteklemiyor. Türkçe sesli etkileşim için Google Chrome veya Edge kullanmanızı öneririz. (Test için Simülasyon Modu başlatılıyor)');
     }
 
@@ -1809,7 +1296,6 @@ export const MoniDashboard: React.FC = () => {
     await databaseService.saveReminder(reminder);
     const loaded = await databaseService.getReminders();
     setReminders(loaded);
-    refreshExecutiveStatus(todos, loaded, memories);
 
     setNewReminderTitle('');
     addBridgeLog(`Hatırlatıcı Eklendi: ${reminder.title}`);
@@ -1819,7 +1305,6 @@ export const MoniDashboard: React.FC = () => {
     await databaseService.deleteReminder(id);
     const loaded = await databaseService.getReminders();
     setReminders(loaded);
-    refreshExecutiveStatus(todos, loaded, memories);
     addBridgeLog(`Hatırlatıcı Silindi: ${id}`);
   };
 
@@ -1841,7 +1326,6 @@ export const MoniDashboard: React.FC = () => {
     await databaseService.saveReminder(reminder);
     const loaded = await databaseService.getReminders();
     setReminders(loaded);
-    refreshExecutiveStatus(todos, loaded, memories);
 
     setNewReminderTitle('');
     addBridgeLog(`Randevu Eklendi: ${reminder.title} (${appointmentDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`);
@@ -1890,7 +1374,6 @@ export const MoniDashboard: React.FC = () => {
     await databaseService.saveTodo(todo);
     const loaded = await databaseService.getTodos();
     setTodos(loaded);
-    refreshExecutiveStatus(loaded, reminders, memories);
 
     setNewTodoTask('');
     addBridgeLog(`Görev Eklendi: ${todo.task} (Öncelik: ${todo.priority})`);
@@ -1901,7 +1384,6 @@ export const MoniDashboard: React.FC = () => {
     await databaseService.saveTodo(updated);
     const loaded = await databaseService.getTodos();
     setTodos(loaded);
-    refreshExecutiveStatus(loaded, reminders, memories);
     addBridgeLog(`Görev güncellendi: ${todo.task} -> ${updated.isCompleted ? 'Tamamlandı' : 'Bekliyor'}`);
   };
 
@@ -1909,7 +1391,6 @@ export const MoniDashboard: React.FC = () => {
     await databaseService.deleteTodo(id);
     const loaded = await databaseService.getTodos();
     setTodos(loaded);
-    refreshExecutiveStatus(loaded, reminders, memories);
     addBridgeLog(`Görev Silindi: ${id}`);
   };
 
@@ -1919,470 +1400,8 @@ export const MoniDashboard: React.FC = () => {
     addBridgeLog('Sohbet geçmişi yerel veritabanından silindi.');
   };
 
-  const renderDashboard2View = () => {
-    const todayReminders = reminders.filter(r => {
-      const d = new Date(r.dateTime);
-      const now = new Date();
-      return (
-        d.getDate() === now.getDate() &&
-        d.getMonth() === now.getMonth() &&
-        d.getFullYear() === now.getFullYear()
-      );
-    }).sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime());
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
-        <div className="dashboard2-header-card" style={{ display: 'flex', flexDirection: 'row', gap: '14px', background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.08)', padding: '16px 14px', borderRadius: '24px', boxShadow: 'var(--glass-shadow)', alignItems: 'center', width: '100%', boxSizing: 'border-box' }}>
-          <div className="dashboard2-avatar-wrapper" style={{ width: '110px', height: '110px', borderRadius: '50%', border: moniStatus === 'listening' ? '2.5px solid var(--accent-cyan)' : moniStatus === 'thinking' ? '2.5px solid #ffd700' : moniStatus === 'speaking' ? '2.5px solid var(--accent-purple)' : moniStatus === 'error' ? '2.5px solid var(--accent-red)' : '2px solid rgba(255, 255, 255, 0.15)', boxShadow: moniStatus === 'listening' ? '0 0 20px rgba(0, 240, 255, 0.5)' : moniStatus === 'thinking' ? '0 0 20px rgba(255, 215, 0, 0.5)' : moniStatus === 'speaking' ? '0 0 20px rgba(157, 78, 221, 0.5)' : 'none', overflow: 'hidden', position: 'relative', flexShrink: 0, transition: 'all 0.3s ease' }}>
-        
-
-            <MoniAvatar
-              status={moniStatus}
-              isSpeaking={moniStatus === 'speaking'}
-              mood={avatarMood}
-              avatarType={avatarType}
-              eyeColor={eyeColor}
-              animationsEnabled={avatarAnimationsEnabled}
-              mouthAnimationEnabled={avatarMouthAnimationEnabled}
-              effectsIntensity={avatarEffectsIntensity}
-            />
-          </div>
-
-          {/* Daily Brief Box */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '0.9rem' }}>🧠</span>
-              <span style={{ fontSize: '0.82rem', fontWeight: '800', color: 'var(--accent-cyan)', letterSpacing: '0.3px' }}>
-                MONI GÜNLÜK BRİFİNGİ
-              </span>
-              {isGeneratingBrief && (
-                <span style={{ fontSize: '0.62rem', color: '#ffd700', animation: 'pulse 1.2s infinite' }}>
-                  (Hazırlanıyor...)
-                </span>
-              )}
-            </div>
-            
-            <div style={{
-              fontSize: '0.76rem',
-              color: '#e0e0e0',
-              lineHeight: '1.45',
-              maxHeight: '85px',
-              overflowY: 'auto',
-              background: 'rgba(7, 8, 13, 0.4)',
-              padding: '8px 10px',
-              borderRadius: '12px',
-              border: '1px solid rgba(255, 255, 255, 0.04)',
-              wordBreak: 'break-word'
-            }}>
-              {dailyBriefText}
-            </div>
-
-            <button
-              onClick={handleSpeakDailyBrief}
-              style={{
-                background: 'linear-gradient(135deg, rgba(0, 240, 255, 0.12), rgba(157, 78, 221, 0.12))',
-                border: '1px solid rgba(0, 240, 255, 0.25)',
-                borderRadius: '20px',
-                padding: '5px 14px',
-                color: 'var(--accent-cyan)',
-                fontSize: '0.72rem',
-                fontWeight: '700',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                alignSelf: 'flex-start',
-                transition: 'all 0.2s',
-                fontFamily: 'var(--font-sans)',
-                outline: 'none'
-              }}
-              className="hover-scale"
-            >
-              {currentlySpeakingMsgId === 'daily-brief' ? '🛑 Okumayı Durdur' : '🔊 Brifingi Seslendir'}
-            </button>
-          </div>
-        </div>
-
-        {/* Highlighted Top Priority Todo Section */}
-        {(() => {
-          const topTask = scoredTodos.find(t => !t.isCompleted);
-          if (!topTask) {
-            return (
-              <div style={{
-                background: 'rgba(46, 196, 182, 0.04)',
-                border: '1px dashed rgba(46, 196, 182, 0.25)',
-                padding: '14px',
-                borderRadius: '18px',
-                textAlign: 'center',
-                color: 'var(--accent-green)',
-                fontSize: '0.78rem',
-                fontWeight: '600'
-              }}>
-                🎉 Günün yüksek öncelikli bekleyen görevi bulunmuyor. Harika gidiyorsunuz!
-              </div>
-            );
-          }
-
-          const pColor = topTask.priority === 'high' ? '#ff3838' : topTask.priority === 'medium' ? '#ffd700' : '#00f0ff';
-
-          return (
-            <div style={{
-              background: 'linear-gradient(135deg, rgba(212, 175, 55, 0.05) 0%, rgba(12, 14, 22, 0.4) 100%)',
-              border: '1px solid rgba(212, 175, 55, 0.25)',
-              padding: '14px 16px',
-              borderRadius: '20px',
-              boxShadow: '0 4px 20px rgba(212, 175, 55, 0.05)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px',
-              width: '100%',
-              boxSizing: 'border-box'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ fontSize: '0.9rem' }}>🎯</span>
-                  <span style={{ fontSize: '0.72rem', fontWeight: '850', color: '#ffd700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Günün En Yüksek Öncelikli Görevi (Skor: {topTask.score})
-                  </span>
-                </div>
-                <span style={{
-                  fontSize: '0.62rem',
-                  fontWeight: 700,
-                  color: pColor,
-                  background: `${pColor}12`,
-                  border: `1px solid ${pColor}40`,
-                  padding: '2px 6px',
-                  borderRadius: '4px'
-                }}>
-                  {topTask.priority === 'high' ? 'Yüksek' : topTask.priority === 'medium' ? 'Orta' : 'Düşük'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <input
-                  type="checkbox"
-                  checked={topTask.isCompleted}
-                  onChange={() => handleToggleTodo(topTask)}
-                  style={{ width: '18px', height: '18px', accentColor: '#ffd700', cursor: 'pointer', flexShrink: 0 }}
-                />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                  <span style={{ fontSize: '0.86rem', fontWeight: '700', color: '#fff', wordBreak: 'break-word' }}>
-                    {topTask.task}
-                  </span>
-                  <span style={{ fontSize: '0.66rem', color: 'var(--color-muted)' }}>
-                    Oluşturulma: {new Date(topTask.dateTime).toLocaleString('tr-TR')}
-                  </span>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Moni's Recommendations */}
-        <div style={{
-          background: 'rgba(12, 14, 22, 0.4)',
-          border: '1px solid rgba(255, 255, 255, 0.05)',
-          padding: '14px 16px',
-          borderRadius: '20px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px',
-          width: '100%',
-          boxSizing: 'border-box'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '0.9rem' }}>💡</span>
-            <span style={{ fontSize: '0.8rem', fontWeight: '800', color: 'var(--accent-purple)', letterSpacing: '0.3px' }}>
-              MONI'NİN TAVSİYELERİ
-            </span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {recommendations.length === 0 ? (
-              <span style={{ fontSize: '0.74rem', color: 'var(--color-muted)', fontStyle: 'italic' }}>
-                Şu an için yeni bir aksiyon önerisi bulunmuyor.
-              </span>
-            ) : (
-              recommendations.map((rec, i) => (
-                <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                  <span style={{ color: '#ffd700', fontSize: '0.8rem', marginTop: '1px' }}>✦</span>
-                  <span style={{ fontSize: '0.76rem', color: '#e0e0e0', lineHeight: '1.4' }}>{rec}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Today's Agenda & Active Projects Side-by-Side (or stacked on mobile) */}
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '14px',
-          width: '100%'
-        }}>
-          {/* Today's Agenda */}
-          <div style={{
-            background: 'rgba(12, 14, 22, 0.4)',
-            border: '1px solid rgba(255, 255, 255, 0.05)',
-            padding: '14px 16px',
-            borderRadius: '20px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-            width: '100%',
-            boxSizing: 'border-box'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontSize: '0.9rem' }}>📅</span>
-                <span style={{ fontSize: '0.8rem', fontWeight: '800', color: 'var(--accent-cyan)', letterSpacing: '0.3px' }}>
-                  BUGÜNKÜ AJANDA
-                </span>
-              </div>
-              <span style={{ fontSize: '0.68rem', color: 'var(--color-muted)' }}>{todayReminders.length} planlı iş</span>
-            </div>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '160px', overflowY: 'auto' }}>
-              {todayReminders.length === 0 ? (
-                <span style={{ fontSize: '0.74rem', color: 'var(--color-muted)', fontStyle: 'italic', padding: '6px 0' }}>
-                  Bugün için planlanmış bir randevu veya hatırlatıcı bulunmuyor.
-                </span>
-              ) : (
-                todayReminders.map(rem => (
-                  <div
-                    key={rem.id}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      background: 'rgba(255, 255, 255, 0.01)',
-                      border: '1px solid rgba(255, 255, 255, 0.03)',
-                      borderRadius: '12px',
-                      padding: '8px 12px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                      <span style={{
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '0.72rem',
-                        fontWeight: '700',
-                        color: 'var(--accent-purple)',
-                        flexShrink: 0
-                      }}>
-                        {new Date(rem.dateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                      <span style={{
-                        fontSize: '0.78rem',
-                        color: '#fff',
-                        textDecoration: rem.isCompleted ? 'line-through' : 'none',
-                        opacity: rem.isCompleted ? 0.5 : 1,
-                        whiteSpace: 'nowrap',
-                        textOverflow: 'ellipsis',
-                        overflow: 'hidden'
-                      }}>
-                        {rem.title}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteReminder(rem.id)}
-                      style={{ background: 'transparent', border: 'none', color: 'rgba(255, 56, 56, 0.65)', cursor: 'pointer', fontSize: '0.74rem', flexShrink: 0 }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Active Projects Tag Cloud */}
-          <div style={{
-            background: 'rgba(12, 14, 22, 0.4)',
-            border: '1px solid rgba(255, 255, 255, 0.05)',
-            padding: '14px 16px',
-            borderRadius: '20px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-            width: '100%',
-            boxSizing: 'border-box'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '0.9rem' }}>📁</span>
-              <span style={{ fontSize: '0.8rem', fontWeight: '800', color: 'var(--accent-purple)', letterSpacing: '0.3px' }}>
-                TAKİPTEKİ PROJELERİNİZ
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-              {activeProjectsList.length === 0 ? (
-                <span style={{ fontSize: '0.74rem', color: 'var(--color-muted)', fontStyle: 'italic', lineHeight: '1.4' }}>
-                  Kayıtlı aktif projeniz bulunmuyor. Hafızaya proje eklemek için: "Moni, FitHayat projesini hatırla" demeniz yeterlidir.
-                </span>
-              ) : (
-                activeProjectsList.map((project, i) => (
-                  <span
-                    key={i}
-                    style={{
-                      fontSize: '0.72rem',
-                      fontWeight: 700,
-                      color: 'var(--accent-cyan)',
-                      background: 'rgba(0, 240, 255, 0.06)',
-                      border: '1px solid rgba(0, 240, 255, 0.22)',
-                      padding: '4px 10px',
-                      borderRadius: '20px',
-                      boxShadow: '0 2px 6px rgba(0, 240, 255, 0.04)'
-                    }}
-                  >
-                    #{project}
-                  </span>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Voice Trigger Glowing Action Button */}
-        <button
-          onClick={handleMicClick}
-          className={`btn-voice-trigger ${moniStatus !== 'idle' ? 'active' : ''}`}
-          style={{
-            background: moniStatus === 'listening'
-              ? 'linear-gradient(135deg, rgba(0, 240, 255, 0.25), rgba(157, 78, 221, 0.15))'
-              : moniStatus === 'thinking'
-                ? 'linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(157, 78, 221, 0.15))'
-                : moniStatus === 'speaking'
-                  ? 'linear-gradient(135deg, rgba(157, 78, 221, 0.25), rgba(0, 240, 255, 0.15))'
-                  : moniStatus === 'error'
-                    ? 'linear-gradient(135deg, rgba(255, 56, 56, 0.25), rgba(157, 78, 221, 0.15))'
-                    : 'linear-gradient(135deg, rgba(212, 175, 55, 0.25), rgba(157, 78, 221, 0.25))',
-            border: moniStatus === 'listening'
-              ? '2px solid var(--accent-cyan)'
-              : moniStatus === 'thinking'
-                ? '2px solid #ffd700'
-                : moniStatus === 'speaking'
-                  ? '2px solid var(--accent-purple)'
-                  : moniStatus === 'error'
-                    ? '2px solid var(--accent-red)'
-                    : '2px solid #ffd700',
-            borderRadius: '32px',
-            color: moniStatus === 'listening'
-              ? 'var(--accent-cyan)'
-              : moniStatus === 'thinking'
-                ? '#ffd700'
-                : moniStatus === 'speaking'
-                  ? 'var(--accent-purple)'
-                  : moniStatus === 'error'
-                    ? 'var(--accent-red)'
-                    : '#ffd700',
-            padding: '14px 32px',
-            fontSize: '1rem',
-            fontWeight: '700',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '10px',
-            boxShadow: moniStatus === 'listening'
-              ? '0 0 20px rgba(0, 240, 255, 0.4), inset 0 0 8px rgba(0, 240, 255, 0.1)'
-              : moniStatus === 'thinking'
-                ? '0 0 20px rgba(255, 215, 0, 0.4), inset 0 0 8px rgba(255, 215, 0, 0.1)'
-                : moniStatus === 'speaking'
-                  ? '0 0 20px rgba(157, 78, 221, 0.4), inset 0 0 8px rgba(157, 78, 221, 0.1)'
-                  : moniStatus === 'error'
-                    ? '0 0 20px rgba(255, 56, 56, 0.4), inset 0 0 8px rgba(255, 56, 56, 0.1)'
-                    : '0 0 20px rgba(255, 215, 0, 0.2), inset 0 0 8px rgba(255, 215, 0, 0.1)',
-            transition: 'all 0.3s ease',
-            outline: 'none',
-            fontFamily: 'var(--font-sans)',
-            letterSpacing: '0.5px',
-            width: '100%',
-            boxSizing: 'border-box',
-            marginTop: '6px'
-          }}
-        >
-          <span style={{ fontSize: '1.2rem' }}>
-            {moniStatus === 'listening' ? '●' : moniStatus === 'thinking' ? '⏳' : moniStatus === 'speaking' ? '🔊' : moniStatus === 'error' ? '⚠️' : '🎤'}
-          </span>
-          {moniStatus === 'listening' && 'Moni Dinliyor...'}
-          {moniStatus === 'thinking' && 'Düşünüyor...'}
-          {moniStatus === 'speaking' && 'Konuşuyor...'}
-          {moniStatus === 'error' && 'Hata Oluştu!'}
-          {moniStatus === 'idle' && 'Sesli Komut Ver'}
-        </button>
-
-        {/* Quick Icon Shortcuts Grid */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: '10px',
-          width: '100%',
-          marginTop: '4px',
-          boxSizing: 'border-box'
-        }}>
-          {[
-            { id: 'chat', label: 'Asistan', icon: '💬' },
-            { id: 'calendar', label: 'Takvim', icon: '📅' },
-            { id: 'todos', label: 'Görevler', icon: '📋' },
-            { id: 'notes', label: 'Notlarım', icon: '📝' }
-          ].map(item => (
-            <div
-              key={item.id}
-              onClick={() => {
-                setCurrentView(item.id as any);
-                addBridgeLog(`Hızlı geçiş: ${item.label}`);
-              }}
-              style={{
-                background: 'rgba(18, 20, 29, 0.6)',
-                border: '1px solid rgba(255, 255, 255, 0.06)',
-                borderRadius: '16px',
-                padding: '10px 4px',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '4px',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                boxShadow: 'var(--glass-shadow)'
-              }}
-              className="home-nav-card"
-            >
-              <span style={{ fontSize: '1.3rem' }}>{item.icon}</span>
-              <span style={{ fontSize: '0.66rem', fontWeight: '700', color: 'var(--color-secondary)' }}>{item.label}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Switch back to legacy layout link */}
-        <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginTop: '6px' }}>
-          <button
-            onClick={() => {
-              setIsDashboard2Enabled(false);
-              localStorage.setItem('moni_is_dashboard2_enabled', 'false');
-              addBridgeLog("Klasik ana ekran arayüzüne geçildi.");
-            }}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--color-muted)',
-              fontSize: '0.74rem',
-              textDecoration: 'underline',
-              cursor: 'pointer',
-              padding: '6px'
-            }}
-          >
-            Klasik Ana Ekran Arayüzüne Dön
-          </button>
-        </div>
-
-      </div>
-    );
-  };
-
   // Helper rendering functions for mobile subviews
   const renderHomeView = () => {
-    if (isDashboard2Enabled) {
-      return renderDashboard2View();
-    }
-
     const nextReminder = reminders.find(r => !r.isCompleted);
     const reminderText = nextReminder
       ? `Saat ${new Date(nextReminder.dateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}'da ${nextReminder.title} var.`
@@ -2479,16 +1498,144 @@ export const MoniDashboard: React.FC = () => {
                     : '2px solid rgba(255, 255, 255, 0.15)',
             transition: 'all 0.4s ease'
           }}>
-            <MoniAvatar
-              status={moniStatus}
-              isSpeaking={moniStatus === 'speaking'}
-              mood={avatarMood}
-              avatarType={avatarType}
-              eyeColor={eyeColor}
-              animationsEnabled={avatarAnimationsEnabled}
-              mouthAnimationEnabled={avatarMouthAnimationEnabled}
-              effectsIntensity={avatarEffectsIntensity}
-            />
+            {/* The avatar display */}
+            {avatarType === 'image' ? (
+              <img
+                src={
+                  eyeColor === 'blue'
+                    ? '/avatar_woman_blue.png'
+                    : eyeColor === 'black'
+                      ? '/avatar_woman_black.png'
+                      : eyeColor === 'purple'
+                        ? '/avatar_woman_purple.png'
+                        : eyeColor === 'gold'
+                          ? '/avatar_woman_gold.png'
+                          : eyeColor === 'green'
+                            ? '/avatar_woman.png'
+                            : '/avatar_woman_green.png' // default / option 6 is green-glowing
+                }
+                alt="Moni Avatar"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  transform: moniStatus === 'speaking' ? 'scale(1.05)' : 'scale(1)',
+                  animation: moniStatus === 'listening'
+                    ? 'avatar-pulse 1.5s infinite ease-in-out'
+                    : moniStatus === 'thinking'
+                      ? 'pulse-gold 1.5s infinite ease-in-out'
+                      : moniStatus === 'speaking'
+                        ? 'avatar-speak 0.4s infinite alternate ease-in-out'
+                        : 'avatar-float 6s infinite ease-in-out',
+                  transition: 'transform 0.3s ease'
+                }}
+              />
+            ) : (
+              <MoniAvatar
+                isSpeaking={moniStatus === 'speaking'}
+                isListening={moniStatus === 'listening'}
+                eyeColor={eyeColor}
+              />
+            )}
+
+            {/* Holographic Mouth Speaking Wave Overlay - Only for static image avatar */}
+            {avatarType === 'image' && (
+              <div style={{
+                position: 'absolute',
+                top: '68%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: '70px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none'
+              }}>
+                {moniStatus === 'speaking' ? (
+                  <svg width="100%" height="100%" viewBox="0 0 70 24" style={{ filter: 'drop-shadow(0 0 5px var(--accent-cyan))' }}>
+                    <ellipse
+                      cx="35"
+                      cy="12"
+                      rx="18"
+                      ry="6"
+                      fill="none"
+                      stroke="var(--accent-cyan)"
+                      strokeWidth="2.5"
+                      style={{
+                        transformOrigin: 'center',
+                        animation: 'mouth-scale 0.25s infinite ease-in-out'
+                      }}
+                    />
+                    <line
+                      x1="15"
+                      y1="12"
+                      x2="55"
+                      y2="12"
+                      stroke="var(--accent-cyan)"
+                      strokeWidth="2"
+                      style={{
+                        transformOrigin: 'center',
+                        animation: 'mouth-line-pulse 0.25s infinite ease-in-out'
+                      }}
+                    />
+                  </svg>
+                ) : (
+                  <div style={{
+                    width: '28px',
+                    height: '2px',
+                    backgroundColor: 'rgba(0, 240, 255, 0.7)',
+                    borderRadius: '2px',
+                    boxShadow: '0 0 6px var(--accent-cyan)'
+                  }} />
+                )}
+              </div>
+            )}
+
+            {/* Speaking animated overlay waves */}
+            {moniStatus === 'speaking' && (
+              <div style={{
+                position: 'absolute',
+                bottom: '15px',
+                display: 'flex',
+                alignItems: 'flex-end',
+                gap: '3px',
+                height: '30px',
+                background: 'rgba(7, 8, 13, 0.6)',
+                padding: '6px 12px',
+                borderRadius: '12px',
+                backdropFilter: 'blur(4px)',
+                border: '1px solid rgba(157, 78, 221, 0.2)'
+              }}>
+                {[1, 2, 3, 4, 5].map((bar) => (
+                  <div
+                    key={bar}
+                    style={{
+                      width: '3px',
+                      backgroundColor: 'var(--accent-purple)',
+                      boxShadow: '0 0 8px var(--accent-purple)',
+                      borderRadius: '3px',
+                      height: '100%',
+                      transformOrigin: 'bottom',
+                      animation: `speak-wave-${bar} 0.5s infinite alternate ease-in-out`
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Listening glowing radar ripple */}
+            {moniStatus === 'listening' && (
+              <div style={{
+                position: 'absolute',
+                width: '100%',
+                height: '100%',
+                borderRadius: '50%',
+                border: '2px solid var(--accent-cyan)',
+                animation: 'radar-ripple 1.5s infinite linear',
+                pointerEvents: 'none'
+              }} />
+            )}
           </div>
         </div>
 
@@ -2505,66 +1652,6 @@ export const MoniDashboard: React.FC = () => {
           <p style={{ fontSize: '0.82rem', color: 'var(--color-secondary)', margin: 0, padding: '0 10px' }}>
             {reminderText}
           </p>
-
-          {/* Voice Activation / Wake Word Status Indicator */}
-          <div style={{
-            margin: '12px auto',
-            padding: '8px 12px',
-            background: 'rgba(255, 255, 255, 0.03)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            borderRadius: '12px',
-            maxWidth: '320px',
-            fontSize: '0.78rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px',
-            alignItems: 'center'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' }}>
-              <span className="pulse-cyan" style={{
-                display: 'inline-block',
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                background: moniStatus === 'speaking'
-                  ? '#9d4edd'
-                  : moniStatus === 'listening'
-                    ? '#00f0ff'
-                    : isWakeRecognitionActiveRef.current
-                      ? '#39ff14'
-                      : '#ffd700'
-              }}></span>
-              <span style={{ color: '#fff' }}>
-                {moniStatus === 'speaking' && '🗣️ Konuşuyor'}
-                {moniStatus === 'listening' && '🎤 Komut dinleniyor'}
-                {moniStatus === 'thinking' && '⏳ Düşünüyor...'}
-                {moniStatus === 'error' && '⚠️ Hata oluştu'}
-                {moniStatus === 'idle' && (
-                  isWakeRecognitionActiveRef.current
-                    ? '🟢 Uyandırma dinlemede ("Moni" deyin)'
-                    : '🟡 Mikrofon izni aktif'
-                )}
-              </span>
-            </div>
-            
-            {/* Backend / OpenAI TTS connection warning */}
-            {backendHealth.checked && (!backendHealth.ok || !backendHealth.hasKey) && (
-              <span style={{ fontSize: '0.72rem', color: '#ff4d4d', textAlign: 'center', fontWeight: '500', padding: '2px 4px' }}>
-                ⚠️ OpenAI kadın sesi bağlı değil, yerel ses kullanılıyor.
-              </span>
-            )}
-
-            {/* iPhone specific warning */}
-            {typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) ? (
-              <span style={{ fontSize: '0.68rem', color: '#ffb703', textAlign: 'center', lineHeight: '1.2' }}>
-                ℹ️ iPhone'da Moni'nin sizi duyabilmesi için sayfa açık ve ekran aktif olmalıdır.
-              </span>
-            ) : (
-              <span style={{ fontSize: '0.68rem', color: 'rgba(255, 255, 255, 0.4)' }}>
-                Sayfa açıkken Moni sizi doğrudan dinleyebilir.
-              </span>
-            )}
-          </div>
 
           {!geminiApiKey && (
             <button
@@ -3276,28 +2363,6 @@ export const MoniDashboard: React.FC = () => {
           </button>
         </div>
 
-        {/* Dashboard 2 / Klasik Ana Ekran Toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Executive Dashboard Arayüzü</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-              {isDashboard2Enabled ? 'Aktif (Gelişmiş Kontrol Paneli)' : 'Pasif (Klasik Arayüz)'}
-            </div>
-          </div>
-          <button
-            className={`btn ${isDashboard2Enabled ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
-            onClick={() => {
-              const val = !isDashboard2Enabled;
-              setIsDashboard2Enabled(val);
-              localStorage.setItem('moni_is_dashboard2_enabled', String(val));
-              addBridgeLog(`Executive Dashboard 2 ${val ? 'etkinleştirildi' : 'devre dışı bırakıldı'}.`);
-            }}
-          >
-            {isDashboard2Enabled ? 'Açık' : 'Kapalı'}
-          </button>
-        </div>
-
         {/* Gemini API Key Configuration */}
         <div style={{
           display: 'flex',
@@ -3393,110 +2458,6 @@ export const MoniDashboard: React.FC = () => {
               ))}
             </div>
           </div>
-
-          {/* Avatar Tipi Seçimi */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
-            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)' }}>Avatar Tipi:</span>
-            <select
-              value={avatarType}
-              onChange={(e) => {
-                const val = e.target.value as 'image' | 'svg';
-                setAvatarType(val);
-                localStorage.setItem('moni_avatar_type', val);
-                addBridgeLog(`Avatar tipi değiştirildi: ${val === 'image' ? 'Görsel Kadın' : 'Canlı Robot'}`);
-              }}
-              style={{
-                background: 'rgba(0, 0, 0, 0.3)',
-                border: '1px solid var(--border-color)',
-                color: 'var(--color-primary)',
-                padding: '6px 10px',
-                borderRadius: '8px',
-                fontSize: '0.76rem',
-                outline: 'none',
-                cursor: 'pointer',
-                width: '100%'
-              }}
-            >
-              <option value="image">👩 Görsel (Varsayılan Kadın)</option>
-              <option value="svg">🤖 Canlı SVG Robot</option>
-            </select>
-          </div>
-
-          {/* Avatar Animasyonları Toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.02)' }}>
-            <div>
-              <div style={{ fontSize: '0.76rem', fontWeight: 600 }}>Avatar Animasyonları</div>
-              <div style={{ fontSize: '0.64rem', color: 'var(--color-secondary)' }}>Nefes alma, yüzerlik ve göz hareketleri</div>
-            </div>
-            <button
-              className={`btn ${avatarAnimationsEnabled ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ padding: '4px 10px', fontSize: '0.68rem', borderRadius: '8px' }}
-              onClick={() => {
-                const val = !avatarAnimationsEnabled;
-                setAvatarAnimationsEnabled(val);
-                localStorage.setItem('moni_avatar_animations_enabled', String(val));
-                addBridgeLog(`Avatar animasyonları ${val ? 'açıldı' : 'kapatıldı'}.`);
-              }}
-            >
-              {avatarAnimationsEnabled ? 'Açık' : 'Kapalı'}
-            </button>
-          </div>
-
-          {/* Ağız Animasyonu Toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.02)' }}>
-            <div>
-              <div style={{ fontSize: '0.76rem', fontWeight: 600 }}>Konuşurken Ağız / Ses Dalgası</div>
-              <div style={{ fontSize: '0.64rem', color: 'var(--color-secondary)' }}>Konuşma sırasında ağız hareketi efekti</div>
-            </div>
-            <button
-              className={`btn ${avatarMouthAnimationEnabled ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ padding: '4px 10px', fontSize: '0.68rem', borderRadius: '8px' }}
-              onClick={() => {
-                const val = !avatarMouthAnimationEnabled;
-                setAvatarMouthAnimationEnabled(val);
-                localStorage.setItem('moni_avatar_mouth_animation_enabled', String(val));
-                addBridgeLog(`Ağız animasyonu ${val ? 'açıldı' : 'kapatıldı'}.`);
-              }}
-            >
-              {avatarMouthAnimationEnabled ? 'Açık' : 'Kapalı'}
-            </button>
-          </div>
-
-          {/* Görsel Efekt Yoğunluğu Seçici */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: '6px' }}>
-            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)' }}>Görsel Efekt Yoğunluğu:</span>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              {(['low', 'medium', 'high'] as const).map((intensity) => {
-                const labels = { low: 'Düşük', medium: 'Orta', high: 'Yüksek' };
-                return (
-                  <button
-                    key={intensity}
-                    onClick={() => {
-                      setAvatarEffectsIntensity(intensity);
-                      localStorage.setItem('moni_avatar_effects_intensity', intensity);
-                      addBridgeLog(`Efekt yoğunluğu ayarlandı: ${labels[intensity]}`);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: '6px 0',
-                      borderRadius: '8px',
-                      background: avatarEffectsIntensity === intensity
-                        ? 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(157, 78, 221, 0.15))'
-                        : 'rgba(255,255,255,0.02)',
-                      border: avatarEffectsIntensity === intensity ? '1px solid var(--accent-cyan)' : '1px solid transparent',
-                      color: avatarEffectsIntensity === intensity ? 'var(--accent-cyan)' : 'var(--color-secondary)',
-                      fontSize: '0.7rem',
-                      fontWeight: avatarEffectsIntensity === intensity ? '600' : '400',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    {labels[intensity]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
 
         {/* Default Speech Voice Profiles */}
@@ -3534,70 +2495,8 @@ export const MoniDashboard: React.FC = () => {
         </div>
 
         {/* Sistem Türkçe Sesi */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>🗣️ Sistem Türkçe Sesi (Tarayıcı Fallback):</span>
-            {/* Auto-select female voice button */}
-            <button
-              onClick={() => {
-                const isMaleVoice = (name: string) =>
-                  /tolga|cem|hakan|sabri|huseyin|male|erkek|man|boy/i.test(name.toLowerCase());
-                const bestFemale = trVoicesList.find(v => {
-                  const name = v.name.toLowerCase();
-                  const lang = v.lang.toLowerCase().replace('_', '-');
-                  const isTr = lang.startsWith('tr') || lang.includes('tr');
-                  const hasFemale = /dilara|yelda|emel|seda|filiz|sibel|hazel|ayse|zeynep|yasemin|ipek|suna|female|bayan|woman|girl|siri|her|google/i.test(name);
-                  return isTr && hasFemale && !isMaleVoice(name);
-                }) || trVoicesList.find(v => {
-                  const lang = v.lang.toLowerCase().replace('_', '-');
-                  const isTr = lang.startsWith('tr') || lang.includes('tr');
-                  return isTr && !isMaleVoice(v.name);
-                });
-                if (bestFemale) {
-                  setSelectedSystemVoiceName(bestFemale.name);
-                  localStorage.setItem('moni_speech_voice_name', bestFemale.name);
-                  addBridgeLog(`Otomatik kadın ses seçildi: ${bestFemale.name}`);
-                  setTimeout(() => speakText('Kadın ses otomatik seçildi.', undefined), 100);
-                } else {
-                  showAudioNotification('Bu cihazda Türkçe kadın sesi bulunamadı. Türkçe erkek ses veya varsayılan ses kullanılacak.');
-                }
-              }}
-              style={{
-                background: 'linear-gradient(135deg, rgba(157, 78, 221, 0.15), rgba(0, 240, 255, 0.1))',
-                border: '1px solid rgba(157, 78, 221, 0.4)',
-                borderRadius: '12px',
-                color: 'var(--accent-purple)',
-                fontSize: '0.66rem',
-                fontWeight: '700',
-                padding: '4px 10px',
-                cursor: 'pointer',
-                outline: 'none',
-                fontFamily: 'var(--font-sans)',
-                whiteSpace: 'nowrap',
-                transition: 'all 0.2s'
-              }}
-            >
-              👩 Kadın Sesi Otomatik Seç
-            </button>
-          </div>
-
-          {/* Active voice label */}
-          {selectedSystemVoiceName && (
-            <div style={{
-              fontSize: '0.66rem',
-              color: 'var(--accent-cyan)',
-              background: 'rgba(0, 240, 255, 0.06)',
-              border: '1px solid rgba(0, 240, 255, 0.15)',
-              borderRadius: '8px',
-              padding: '4px 10px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px'
-            }}>
-              🔊 Aktif ses: <strong>{selectedSystemVoiceName}</strong>
-            </div>
-          )}
-
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>🗣️ Sistem Türkçe Sesi (Tarayıcı Fallback):</span>
           <select
             value={selectedSystemVoiceName}
             onChange={(e) => {
@@ -3607,7 +2506,7 @@ export const MoniDashboard: React.FC = () => {
               addBridgeLog(`Sistem Türkçe ses tercihi güncellendi: ${voiceName || 'Varsayılan'}`);
               if (voiceName) {
                 setTimeout(() => {
-                  speakText('Yeni sistem Türkçe sesi seçildi.', undefined);
+                  speakText("Yeni sistem Türkçe sesi seçildi.", undefined);
                 }, 100);
               }
             }}
@@ -3624,66 +2523,18 @@ export const MoniDashboard: React.FC = () => {
             }}
           >
             <option value="">-- Profil Varsayılan Sesi --</option>
-            {(() => {
-              const isMaleVoice = (name: string) =>
-                /tolga|cem|hakan|sabri|huseyin|male|erkek|man|boy/i.test(name.toLowerCase());
-              const femaleTr = trVoicesList.filter(v => {
-                const lang = v.lang.toLowerCase().replace('_', '-');
-                const isTr = lang.startsWith('tr') || lang.includes('tr');
-                const name = v.name.toLowerCase();
-                const hasFemale = /dilara|yelda|emel|seda|filiz|sibel|hazel|ayse|zeynep|yasemin|ipek|suna|female|bayan|woman|girl|siri|her|google/i.test(name);
-                return isTr && (hasFemale || name.includes('google')) && !isMaleVoice(v.name);
-              });
-              const otherTr = trVoicesList.filter(v => {
-                const lang = v.lang.toLowerCase().replace('_', '-');
-                const isTr = lang.startsWith('tr') || lang.includes('tr');
-                return isTr && !femaleTr.includes(v);
-              });
-              const maleTr = otherTr.filter(v => isMaleVoice(v.name));
-              const neutralTr = otherTr.filter(v => !isMaleVoice(v.name));
-              const others = trVoicesList.filter(v => {
-                const lang = v.lang.toLowerCase().replace('_', '-');
-                return !lang.startsWith('tr') && !lang.includes('tr');
-              });
-              return (
-                <>
-                  {femaleTr.length > 0 && (
-                    <optgroup label="👩 Türkçe Kadın Sesleri (Önerilen)">
-                      {femaleTr.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
-                    </optgroup>
-                  )}
-                  {neutralTr.length > 0 && (
-                    <optgroup label="🗣️ Türkçe Sesler">
-                      {neutralTr.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
-                    </optgroup>
-                  )}
-                  {maleTr.length > 0 && (
-                    <optgroup label="👨 Türkçe Erkek Sesler">
-                      {maleTr.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
-                    </optgroup>
-                  )}
-                  {others.length > 0 && (
-                    <optgroup label="🌐 Diğer Sistem Sesleri">
-                      {others.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
-                    </optgroup>
-                  )}
-                </>
-              );
-            })()}
+            {trVoicesList.map((v) => (
+              <option key={v.name} value={v.name}>
+                {v.name}
+              </option>
+            ))}
           </select>
-          {trVoicesList.length === 0 ? (
+          {trVoicesList.length === 0 && (
             <span style={{ fontSize: '0.68rem', color: 'var(--accent-red)' }}>
-              ⚠️ Bu cihazda sesli okuma motoru bulunamadı, metin modu aktif.
+              ℹ️ Sisteminizde özel Türkçe ses bulunamadı. Fallback olarak varsayılan ses motoru kullanılacaktır.
             </span>
-          ) : (
-            !trVoicesList.some(v => v.lang.toLowerCase().replace('_', '-').startsWith('tr') || v.lang.toLowerCase().includes('tr')) && (
-              <span style={{ fontSize: '0.68rem', color: '#ffd700' }}>
-                ℹ️ Bu cihazda Türkçe kadın sesi bulunamadı. Türkçe erkek ses veya varsayılan ses kullanılacak.
-              </span>
-            )
           )}
         </div>
-
 
         {/* Otomatik Seslendirme Toggle */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
@@ -4290,7 +3141,6 @@ export const MoniDashboard: React.FC = () => {
     await databaseService.deleteMemory(id);
     const loaded = await databaseService.getMemories();
     setMemories(loaded);
-    refreshExecutiveStatus(todos, reminders, loaded);
     addBridgeLog(`Hafıza Silindi: ${id}`);
   };
 
@@ -4308,7 +3158,6 @@ export const MoniDashboard: React.FC = () => {
     await databaseService.saveMemory(memory);
     const loaded = await databaseService.getMemories();
     setMemories(loaded);
-    refreshExecutiveStatus(todos, reminders, loaded);
 
     setNewMemoryContent('');
     addBridgeLog(`Hafıza Eklendi: [${memory.category}] -> "${memory.content}"`);
@@ -4583,55 +3432,6 @@ export const MoniDashboard: React.FC = () => {
 
   return (
     <div onClick={handlePageClick} className="dashboard-root">
-      {audioNotification && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          backgroundColor: 'rgba(255, 56, 56, 0.95)',
-          color: '#fff',
-          padding: '12px 20px',
-          borderRadius: '12px',
-          boxShadow: '0 8px 32px rgba(255, 56, 56, 0.4)',
-          zIndex: 9999,
-          fontFamily: 'var(--font-sans)',
-          fontSize: '0.82rem',
-          fontWeight: '600',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          border: '1px solid rgba(255, 255, 255, 0.15)',
-          minWidth: '280px',
-          justifyContent: 'space-between',
-          backdropFilter: 'blur(10px)',
-          WebkitBackdropFilter: 'blur(10px)'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>⚠️</span>
-            <span>{audioNotification}</span>
-          </div>
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              setAudioNotification(null);
-            }}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#fff',
-              cursor: 'pointer',
-              fontSize: '1.1rem',
-              padding: '0 0 0 10px',
-              fontWeight: 'bold',
-              lineHeight: 1,
-              opacity: 0.8
-            }}
-          >
-            ×
-          </button>
-        </div>
-      )}
       {/* Phone Mockup Wrapper Container */}
       <div className="phone-container">
 
@@ -4927,27 +3727,11 @@ export const MoniDashboard: React.FC = () => {
           .phone-container {
             max-width: 100% !important;
             height: 100vh !important;
-            min-height: 0 !important;
-            max-height: 100vh !important;
+            min-height: 100% !important;
+            max-height: 100% !important;
             border-radius: 0 !important;
             border: none !important;
             box-shadow: none !important;
-          }
-        }
-        @media (max-width: 480px) {
-          .dashboard2-header-card {
-            flex-direction: column !important;
-            align-items: center !important;
-            text-align: center !important;
-            padding: 20px 14px !important;
-          }
-          .dashboard2-header-card button {
-            align-self: center !important;
-          }
-          .dashboard2-avatar-wrapper {
-            width: 120px !important;
-            height: 120px !important;
-            margin-bottom: 8px !important;
           }
         }
       `}</style>

@@ -3,7 +3,6 @@ import type { Reminder } from '../entities/Reminder';
 import type { Note } from '../entities/Note';
 import type { Todo } from '../entities/Todo';
 import type { Message } from './AiRepository';
-import type { MemoryItem } from '../entities/MemoryItem';
 
 export interface DatabaseRepository {
   // Contacts Management
@@ -30,11 +29,4 @@ export interface DatabaseRepository {
   getChatHistory(): Promise<Message[]>;
   saveChatMessage(message: Message): Promise<void>;
   clearChatHistory(): Promise<void>;
-
-  // Memory Management
-  getMemories(): Promise<MemoryItem[]>;
-  saveMemory(memory: MemoryItem): Promise<void>;
-  deleteMemory(id: string): Promise<void>;
-  clearMemories(): Promise<void>;
 }
-

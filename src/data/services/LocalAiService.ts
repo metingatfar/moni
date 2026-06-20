@@ -9,7 +9,7 @@ export class LocalAiService implements AiRepository {
     const inputLower = lastUserMessage.toLowerCase();
     
     // Check if we have a Gemini API key
-    const geminiKey = localStorage.getItem('gemini_api_key') || (import.meta.env ? import.meta.env.VITE_***REMOVED*** : '') || '';
+    const geminiKey = localStorage.getItem('gemini_api_key') || (import.meta.env ? import.meta.env.VITE_GEMINI_API_KEY : '') || '';
 
     if (geminiKey && !useOfflineMode) {
       try {

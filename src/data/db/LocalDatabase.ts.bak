@@ -4,8 +4,6 @@ import type { Reminder } from '../../domain/entities/Reminder';
 import type { Note } from '../../domain/entities/Note';
 import type { Todo } from '../../domain/entities/Todo';
 import type { Message } from '../../domain/repositories/AiRepository';
-import type { MemoryItem } from '../../domain/entities/MemoryItem';
-import { SecurityHelper } from '../../memory/SecurityHelper';
 
 export class LocalDatabase implements DatabaseRepository {
   private getStorageItem<T>(key: string, defaultValue: T): T {
@@ -145,56 +143,6 @@ export class LocalDatabase implements DatabaseRepository {
 
   async clearChatHistory(): Promise<void> {
     localStorage.removeItem('moni_chat_history');
-  }
-
-  // Memory Management
-  async getMemories(): Promise<MemoryItem[]> {
-    const encryptedData = localStorage.getItem('moni_memories');
-    if (!encryptedData) {
-      return [];
-    }
-    try {
-      const decrypted = SecurityHelper.decrypt(encryptedData);
-      if (!decrypted) return [];
-      const parsed = JSON.parse(decrypted);
-      return parsed.map((m: any) => ({
-        ...m
-      }));
-    } catch (e) {
-      console.error('LocalDatabase: Error parsing memories', e);
-      return [];
-    }
-  }
-
-  async saveMemory(memory: MemoryItem): Promise<void> {
-    const memories = await this.getMemories();
-    const existingIndex = memories.findIndex(m => m.id === memory.id);
-    if (existingIndex > -1) {
-      memories[existingIndex] = memory;
-    } else {
-      memories.push(memory);
-    }
-    try {
-      const encrypted = SecurityHelper.encrypt(JSON.stringify(memories));
-      localStorage.setItem('moni_memories', encrypted);
-    } catch (e) {
-      console.error('LocalDatabase: Error writing memories to storage', e);
-    }
-  }
-
-  async deleteMemory(id: string): Promise<void> {
-    const memories = await this.getMemories();
-    const filtered = memories.filter(m => m.id !== id);
-    try {
-      const encrypted = SecurityHelper.encrypt(JSON.stringify(filtered));
-      localStorage.setItem('moni_memories', encrypted);
-    } catch (e) {
-      console.error('LocalDatabase: Error writing memories to storage after deletion', e);
-    }
-  }
-
-  async clearMemories(): Promise<void> {
-    localStorage.removeItem('moni_memories');
   }
 }
 export const databaseService = new LocalDatabase();

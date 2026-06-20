@@ -263,8 +263,20 @@ code {
     max-width: 100% !important;
     height: 100vh !important;
     max-height: 100vh !important;
+    min-height: 0 !important;
     border-radius: 0 !important;
     border: none !important;
     box-shadow: none !important;
   }
 }
+
+@keyframes pulse-gold {
+  0%, 100% { filter: brightness(1) drop-shadow(0 0 5px rgba(255, 215, 0, 0.4)); }
+  50% { filter: brightness(1.2) drop-shadow(0 0 20px rgba(255, 215, 0, 0.8)); }
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.9); }
+}
+

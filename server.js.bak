@@ -1,0 +1,64 @@
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY);
+
+// Ana sayfa test rotası
+app.get('/', (req, res) => {
+    res.send('Moni Antigravity Sunucusu Aktif!');
+});
+
+// Canlı Akış (Stream) Rotası - Mobil uygulaman buraya bağlanacak
+app.post('/api/chat/stream', async (req, res) => {
+    try {
+        const { message, apiKey } = req.body; // Mobilden gelen kullanıcı mesajı
+
+        if (!message) {
+            return res.status(400).json({ error: "Mesaj bos olamaz." });
+        }
+
+        // Dinamik olarak gelen API anahtarını kullan veya çevresel değişkene düş
+        const activeKey = apiKey || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+        if (!activeKey) {
+            // Eğer geçerli bir anahtar yoksa hata ver
+            return res.status(400).json({ error: "Geçerli bir Gemini API anahtarı tanımlanmamış." });
+        }
+
+        const dynamicGenAI = new GoogleGenerativeAI(activeKey);
+
+        // Gemini 2.5 Flash modelini çağırıyoruz
+        const model = dynamicGenAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+        // Cevabın parça parça (Stream) akması için bağlantı ayarlarını yapıyoruz
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        // Gemini'den cevabı canlı akış olarak istiyoruz
+        const result = await model.generateContentStream(message);
+
+        // Gelen her bir kelime/harf parçasını anında mobil uygulamaya fırlatıyoruz
+        for await (const chunk of result.stream) {
+            const chunkText = chunk.text();
+            res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+        }
+
+        // Akış bittiğinde bağlantıyı güvenlice kapatıyoruz
+        res.end();
+
+    } catch (error) {
+        console.error("Akis esnasında hata olustu:", error);
+        res.status(500).json({ error: "Sistemsel bir hata meydana geldi." });
+    }
+});
+
+const PORT = 5000;
+app.listen(PORT, () => {
+    console.log(`Sunucu ${PORT} portunda basariyla baslatildi.`);
+});
