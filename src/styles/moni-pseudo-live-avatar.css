@@ -1,0 +1,236 @@
+/* Moni Pseudo-Live Avatar Styles */
+
+.moni-pseudo-avatar-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  overflow: hidden;
+  border-radius: 24px;
+}
+
+.moni-pseudo-bg-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 24px;
+  /* Fixed image - NO scale/translate/rotate animations */
+  transition: filter 0.5s ease;
+}
+
+/* 1. Blink Mask Overlay */
+.moni-pseudo-blink-overlay {
+  position: absolute;
+  top: 36%; /* Estimated eye position */
+  left: 30%;
+  right: 30%;
+  height: 6%;
+  background: rgba(7, 8, 13, 0.98);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(1.5px);
+}
+
+.moni-pseudo-avatar-container.animated .moni-pseudo-blink-overlay {
+  animation: pseudo-eye-blink 6s infinite ease-in-out;
+}
+
+/* 2. Cyberneck Pulsing Light Lines Overlay */
+.moni-pseudo-neck-light {
+  position: absolute;
+  bottom: 12%; /* Neck height */
+  left: 45%;
+  right: 45%;
+  height: 3px;
+  background: var(--accent-cyan);
+  border-radius: 2px;
+  box-shadow: 0 0 10px var(--accent-cyan);
+  pointer-events: none;
+  opacity: 0.15;
+}
+
+.moni-pseudo-avatar-container.animated .moni-pseudo-neck-light {
+  animation: pseudo-neck-pulse 3s infinite alternate ease-in-out;
+}
+
+/* 3. Outer Radar Rings for Listening Mode */
+.moni-pseudo-radar-ring {
+  position: absolute;
+  border-radius: 30px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.moni-pseudo-radar-ring.ring-1 {
+  width: 104%;
+  height: 104%;
+  border: 2px solid var(--accent-cyan);
+}
+.moni-pseudo-radar-ring.ring-2 {
+  width: 110%;
+  height: 110%;
+  border: 1px dashed var(--accent-cyan);
+}
+
+.moni-pseudo-avatar-container.listening.animated .moni-pseudo-radar-ring.ring-1 {
+  animation: pseudo-radar-expand 1.5s infinite linear;
+}
+.moni-pseudo-avatar-container.listening.animated .moni-pseudo-radar-ring.ring-2 {
+  animation: pseudo-radar-expand-delay 2s infinite linear;
+}
+
+/* 4. Head Circle Pulsing Halo for Thinking Mode */
+.moni-pseudo-head-halo {
+  position: absolute;
+  width: 103%;
+  height: 103%;
+  border-radius: 26px;
+  border: 2px solid #ffd700;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.moni-pseudo-avatar-container.thinking.animated .moni-pseudo-head-halo {
+  animation: pseudo-halo-spin 3s infinite linear;
+  opacity: 0.6;
+}
+
+/* 5. Speaking Voice Waveform Overlay at Mouth Level */
+.moni-pseudo-mouth-wave {
+  position: absolute;
+  top: 68%; /* Estimated mouth height */
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 70px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  filter: drop-shadow(0 0 5px var(--accent-cyan));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.moni-pseudo-avatar-container.speaking .moni-pseudo-mouth-wave {
+  opacity: 1;
+}
+
+.moni-pseudo-mouth-ellipse {
+  transform-origin: center;
+}
+.moni-pseudo-avatar-container.speaking.animated .moni-pseudo-mouth-ellipse {
+  animation: pseudo-mouth-scale 0.25s infinite ease-in-out;
+}
+
+.moni-pseudo-mouth-line {
+  transform-origin: center;
+}
+.moni-pseudo-avatar-container.speaking.animated .moni-pseudo-mouth-line {
+  animation: pseudo-mouth-line-pulse 0.25s infinite ease-in-out;
+}
+
+/* 6. Glow Tint Overlays */
+.moni-pseudo-glow-tint {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  border-radius: 24px;
+  pointer-events: none;
+  transition: background 0.5s ease;
+}
+
+.moni-pseudo-avatar-container.listening .moni-pseudo-glow-tint {
+  background: radial-gradient(circle, rgba(0, 240, 255, 0.08) 0%, transparent 80%);
+}
+.moni-pseudo-avatar-container.thinking .moni-pseudo-glow-tint {
+  background: radial-gradient(circle, rgba(255, 215, 0, 0.08) 0%, transparent 80%);
+}
+.moni-pseudo-avatar-container.speaking .moni-pseudo-glow-tint {
+  background: radial-gradient(circle, rgba(157, 78, 221, 0.08) 0%, transparent 80%);
+}
+.moni-pseudo-avatar-container.error .moni-pseudo-glow-tint {
+  background: radial-gradient(circle, rgba(255, 56, 56, 0.15) 0%, transparent 80%);
+  border: 2px solid var(--accent-red);
+}
+
+/* 7. Bottom Soundwave Visualizer Bars */
+.moni-pseudo-wave-bars {
+  position: absolute;
+  bottom: 15px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 30px;
+  background: rgba(7, 8, 13, 0.6);
+  padding: 6px 12px;
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(157, 78, 221, 0.2);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.moni-pseudo-avatar-container.speaking .moni-pseudo-wave-bars {
+  opacity: 1;
+}
+
+.moni-pseudo-bar {
+  width: 3px;
+  background-color: var(--accent-purple);
+  box-shadow: 0 0 8px var(--accent-purple);
+  border-radius: 3px;
+  height: 100%;
+  transform-origin: bottom;
+}
+
+.moni-pseudo-avatar-container.speaking.animated .moni-pseudo-bar.bar-1 { animation: pseudo-bar-wave-1 0.5s infinite alternate ease-in-out; }
+.moni-pseudo-avatar-container.speaking.animated .moni-pseudo-bar.bar-2 { animation: pseudo-bar-wave-2 0.5s infinite alternate ease-in-out; }
+.moni-pseudo-avatar-container.speaking.animated .moni-pseudo-bar.bar-3 { animation: pseudo-bar-wave-3 0.5s infinite alternate ease-in-out; }
+.moni-pseudo-avatar-container.speaking.animated .moni-pseudo-bar.bar-4 { animation: pseudo-bar-wave-4 0.5s infinite alternate ease-in-out; }
+.moni-pseudo-avatar-container.speaking.animated .moni-pseudo-bar.bar-5 { animation: pseudo-bar-wave-5 0.5s infinite alternate ease-in-out; }
+
+/* Keyframes */
+@keyframes pseudo-eye-blink {
+  0%, 90%, 100% { opacity: 0; }
+  93%, 95% { opacity: 0.95; }
+}
+
+@keyframes pseudo-neck-pulse {
+  0% { opacity: 0.1; box-shadow: 0 0 4px var(--accent-cyan); }
+  100% { opacity: 0.45; box-shadow: 0 0 12px var(--accent-cyan); }
+}
+
+@keyframes pseudo-radar-expand {
+  0% { transform: scale(0.98); opacity: 0.6; }
+  100% { transform: scale(1.08); opacity: 0; }
+}
+
+@keyframes pseudo-radar-expand-delay {
+  0% { transform: scale(0.95); opacity: 0.4; }
+  100% { transform: scale(1.15); opacity: 0; }
+}
+
+@keyframes pseudo-halo-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pseudo-mouth-scale {
+  0%, 100% { transform: scaleY(0.6) scaleX(0.95); }
+  50% { transform: scaleY(1.8) scaleX(1.05); }
+}
+
+@keyframes pseudo-mouth-line-pulse {
+  0%, 100% { transform: scaleY(0.8); }
+  50% { transform: scaleY(1.6); }
+}
+
+@keyframes pseudo-bar-wave-1 { 0% { transform: scaleY(0.2); } 100% { transform: scaleY(0.9); } }
+@keyframes pseudo-bar-wave-2 { 0% { transform: scaleY(0.4); } 100% { transform: scaleY(1.0); } }
+@keyframes pseudo-bar-wave-3 { 0% { transform: scaleY(0.3); } 100% { transform: scaleY(0.8); } }
+@keyframes pseudo-bar-wave-4 { 0% { transform: scaleY(0.5); } 100% { transform: scaleY(0.95); } }
+@keyframes pseudo-bar-wave-5 { 0% { transform: scaleY(0.15); } 100% { transform: scaleY(0.7); } }

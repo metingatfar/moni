@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MoniAvatar } from './components/MoniAvatar';
+import { MoniLive2D } from './components/MoniLive2D';
 // import { LocalAiService } from '../data/services/LocalAiService';
 import { NativeBridge } from '../data/services/NativeBridge';
 import { databaseService } from '../data/db/LocalDatabase';
@@ -2479,7 +2480,7 @@ export const MoniDashboard: React.FC = () => {
                     : '2px solid rgba(255, 255, 255, 0.15)',
             transition: 'all 0.4s ease'
           }}>
-            <MoniAvatar
+            <MoniLive2D
               status={moniStatus}
               isSpeaking={moniStatus === 'speaking'}
               mood={avatarMood}
