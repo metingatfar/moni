@@ -25,6 +25,20 @@ dist-ssr
 
 # Environment configurations
 .env
+.env.local
+.env.production
+.env.development
 .env.*
 !.env.example
 
+# SSL keys and certs
+*.pem
+*.key
+*.p12
+
+# Service accounts & Credentials
+google-service-account.json
+service-account.json
+firebase-admin.json
+credentials.json
+*.json.service
