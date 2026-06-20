@@ -118,8 +118,8 @@ export const MoniDashboard: React.FC = () => {
       const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
-        setBackendHealth({ checked: true, ok: data.ok, hasKey: data.openaiKey });
-        console.log(`[MONI TTS] OPENAI_API_KEY mevcut: ${data.openaiKey}`);
+        setBackendHealth({ checked: true, ok: data.ok, hasKey: !!data.elevenLabsKey });
+        console.log(`[MONI TTS] ELEVENLABS_API_KEY mevcut: ${data.elevenLabsKey}`);
       } else {
         setBackendHealth({ checked: true, ok: false, hasKey: false });
         console.warn(`[MONI TTS] Sağlık kontrolü başarısız: ${response.status}`);
@@ -447,7 +447,17 @@ export const MoniDashboard: React.FC = () => {
       window.speechSynthesis.onvoiceschanged = loadVoices;
     }
 
+    const handleInfoNotification = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail && customEvent.detail.message) {
+        showAudioNotification(customEvent.detail.message);
+      }
+    };
+
+    window.addEventListener('moni_info_notification', handleInfoNotification);
+
     return () => {
+      window.removeEventListener('moni_info_notification', handleInfoNotification);
       if (wakeRecognitionRef.current) {
         try {
           wakeRecognitionRef.current.stop();
@@ -672,6 +682,11 @@ export const MoniDashboard: React.FC = () => {
     voiceOverride?: string,
     restartMode: SpeakMode = "wake"
   ) => {
+    // Log step 3 if this is the initial greeting
+    if (text.includes("Buyurun")) {
+      console.log('[VOICE-3] Buyurun mesajı okunuyor');
+    }
+
     // Stop any active STT sessions before starting TTS to avoid 'aborted' collision
     if (commandRecRef.current) {
       try {
@@ -693,8 +708,8 @@ export const MoniDashboard: React.FC = () => {
     setAvatarMood('happy');
     const activeVoiceType = (voiceOverride || selectedVoice) as any;
 
-    // Add bridge log indicating which engine is being used
     addBridgeLog(`Seslendirme (OpenAI TTS / Nova): "${text.slice(0, 30)}..."`);
+    console.log('[VOICE-8] OpenAI TTS çağrılıyor');
 
     const options = {
       rate: speechRate,
@@ -706,12 +721,12 @@ export const MoniDashboard: React.FC = () => {
       text,
       activeVoiceType,
       () => {
+        console.log('[VOICE-9] TTS oynatıldı');
         isSpeakingRef.current = false;
         setMoniStatus('idle');
         setAvatarMood('neutral');
         if (callback) callback();
 
-        // Reset manuallyStoppedRef to ensure STT is allowed to auto-restart
         manuallyStoppedRef.current = false;
 
         setTimeout(() => {
@@ -721,6 +736,7 @@ export const MoniDashboard: React.FC = () => {
             !commandRecRef.current
           ) {
             if (restartMode === "wake" && isWakeWordListening) {
+              console.log('[VOICE-10] Wake word moduna geri dönüldü');
               startWakeWordRecognition();
             } else if (restartMode === "command") {
               startCommandListening();
@@ -731,8 +747,6 @@ export const MoniDashboard: React.FC = () => {
       options,
       (errMessage: string) => {
         isSpeakingRef.current = false;
-        // TTS error — show toast + brief avatar alert, then auto-reset to idle.
-        // Does NOT leave permanent error state on dashboard.
         showTemporaryError(
           `Seslendirme yapılamadı: ${errMessage}`,
           `Seslendirme Hatası: ${errMessage}`
@@ -797,10 +811,22 @@ export const MoniDashboard: React.FC = () => {
     // Try to acquire Wake Lock on mobile devices
     requestWakeLock();
 
+    console.log('[VOICE-1] Wake word listener aktif');
+
     if (wakeRecognitionRef.current) {
       try {
         wakeRecognitionRef.current.stop();
       } catch (e) { }
+    }
+
+    // Stop commandRecRef immediately to ensure both are not active at the same time
+    if (commandRecRef.current) {
+      try {
+        manuallyStoppedRef.current = true;
+        commandRecRef.current.stop();
+      } catch (_) {}
+      commandRecRef.current = null;
+      setIsRecording(false);
     }
 
     const rec = new SpeechRecognition();
@@ -825,7 +851,7 @@ export const MoniDashboard: React.FC = () => {
         transcript.endsWith('moni');
 
       if (includesMoni) {
-        console.log('Moni detected via wake word!');
+        console.log('[VOICE-2] Moni kelimesi algılandı');
         rec.stop();
         isWakeRecognitionActiveRef.current = false;
 
@@ -834,10 +860,9 @@ export const MoniDashboard: React.FC = () => {
           playAssistantBeep((window as any).moniAudioContext);
         }
         
-        // Speak "Buyurun, sizi dinliyorum." then start command listening automatically via SpeakMode
         setMoniStatus('speaking');
         setAvatarMood('happy');
-        speakText("Buyurun, sizi dinliyorum.", undefined, undefined, "command");
+        speakText("Buyurun Metin Bey, sizi dinliyorum.", undefined, undefined, "command");
       }
     };
 
@@ -903,7 +928,7 @@ export const MoniDashboard: React.FC = () => {
       return;
     }
 
-    console.log('[MONI COMMAND] Komut dinleme başladı');
+    console.log('[VOICE-4] Komut dinleme başladı');
 
     if (commandRecRef.current) {
       try {
@@ -940,8 +965,7 @@ export const MoniDashboard: React.FC = () => {
     rec.onresult = (event: any) => {
       clearTimeout(silenceTimeout);
       const command = event.results[0][0].transcript;
-      console.log('[MONI COMMAND] Transcript:', command);
-      console.log('[MONI COMMAND] Final command:', command);
+      console.log('[VOICE-5] Transcript alındı:', command);
       addBridgeLog(`Ses Algılandı (STT): "${command}"`);
 
       // Stop recognition immediately after capture
@@ -953,14 +977,14 @@ export const MoniDashboard: React.FC = () => {
       commandRecRef.current = null;
 
       if (command.trim()) {
-        console.log('[MONI COMMAND] AI cevap isteniyor');
-        setMoniStatus('thinking');
-        setAvatarMood('thinking');
-        handleSendMessage(command);
+        processVoiceCommand(command);
       } else {
         setMoniStatus('idle');
         setAvatarMood('neutral');
-        if (isWakeWordListening) startWakeWordRecognition();
+        if (isWakeWordListening) {
+          console.log('[VOICE-10] Wake word moduna geri dönüldü');
+          startWakeWordRecognition();
+        }
       }
     };
 
@@ -1022,6 +1046,105 @@ export const MoniDashboard: React.FC = () => {
         'Ses tanıma başlatılamadı. Lütfen tekrar deneyin.',
         'Ses tanıma başlatılamadı.'
       );
+    }
+  };
+
+  const generateAIReply = async (message: string): Promise<string> => {
+    console.log('[AI-1] Mesaj alındı:', message);
+    console.log('[CHAT-2] AI isteği hazırlanıyor');
+    console.log('[AI-2] API isteği hazırlanıyor');
+    
+    // Check if Gemini API key exists
+    if (!geminiApiKey || !geminiApiKey.trim()) {
+      console.warn('[MONI AI] Gemini API key is missing. Using local fallback.');
+      console.log('[AI-5] Response Body: Local Fallback Mode');
+      console.log('[AI-6] AI cevabı: Merhaba Metin Bey, şu anda temel modda çalışıyorum.');
+      return 'Merhaba Metin Bey, şu anda temel modda çalışıyorum.';
+    }
+
+    try {
+      console.log('[CHAT-3] AI servisine istek atıldı');
+      const memoryContext = MemoryService.formatMemoriesForSystemInstruction(memories);
+      const systemInstructionWithMemories = "Sen Moni adında, son derece zeki, cana yakın ve profesyonel bir yapay zeka asistanı ve özel kalem yöneticisisin. Sana seslenildiğinde ya da konuşulduğunda, kullanıcıyla kibar, sıcak ve yardımsever bir tonda iletişim kurmalısın. Türkçe konuşmalısın. Cevapların kısa, net, samimi ve sesli okumaya tam uyumlu olmalıdır. Markdown biçimlendirmeleri (kalın yazılar, yıldızlar, listeler vb.) veya okunması zor semboller kullanma, çünkü verdiğin cevaplar doğrudan sesli olarak okunacaktır. Kullanıcının not alma, görev ekleme ve randevu planlama isteklerini başarıyla yönetiyorsun." + memoryContext;
+
+      let accumulatedText = '';
+      await voiceService.streamChat(
+        message,
+        (chunk: string) => {
+          accumulatedText += chunk;
+        },
+        geminiApiKey,
+        messages,
+        systemInstructionWithMemories
+      );
+
+      const cleaned = accumulatedText.trim();
+      if (!cleaned) {
+        throw new Error('AI empty response received.');
+      }
+      console.log('[AI-6] AI cevabı:', cleaned);
+      return cleaned;
+    } catch (err: any) {
+      console.error('[MONI AI] AI Request failed:', err);
+      throw err;
+    }
+  };
+
+  const processVoiceCommand = async (command: string) => {
+    if (!command.trim()) {
+      if (isWakeWordListening) {
+        console.log('[VOICE-10] Wake word moduna geri dönüldü');
+        startWakeWordRecognition();
+      }
+      return;
+    }
+
+    console.log('[VOICE-6] AI cevap isteniyor');
+    setMoniStatus('thinking');
+    setAvatarMood('thinking');
+
+    // Add user message to UI
+    const userMsg: Message = {
+      role: 'user',
+      content: command,
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, userMsg]);
+    await databaseService.saveChatMessage(userMsg);
+
+    try {
+      const replyText = await generateAIReply(command);
+      console.log('[VOICE-7] AI cevap geldi:', replyText);
+
+      // Save reply message
+      const newMsgId = 'assistant-' + Date.now();
+      const replyMsg: Message = {
+        id: newMsgId,
+        role: 'assistant',
+        content: replyText,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, replyMsg]);
+      await databaseService.saveChatMessage(replyMsg);
+      console.log('[AI-7] Assistant state güncellendi');
+
+      // Speak using OpenAI TTS
+      speakText(replyText, undefined, undefined, "wake");
+    } catch (err: any) {
+      console.error('[MONI VOICE COMMAND] Hata oluştu:', err);
+      
+      const errorMsgText = `Bağlantı hatası oluştu: ${err.message || err}`;
+      const newMsgId = 'assistant-' + Date.now();
+      const replyMsg: Message = {
+        id: newMsgId,
+        role: 'assistant',
+        content: errorMsgText,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, replyMsg]);
+      await databaseService.saveChatMessage(replyMsg);
+      console.log('[AI-7] Assistant state güncellendi (Hata)');
+      speakText(errorMsgText, undefined, undefined, "wake");
     }
   };
 
@@ -1640,72 +1763,94 @@ export const MoniDashboard: React.FC = () => {
     }
 
     // Default AI response - CANLI AKIS (STREAM) MODU
+    console.log('[CHAT-1] Kullanıcı mesajı gönderildi:', text);
+    
+    // Add temporary assistant msg for streaming or text placeholder
+    const newMsgId = 'assistant-' + Date.now();
+    const streamingAssistantMsg: Message = {
+      id: newMsgId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, streamingAssistantMsg]);
+
     try {
       setMoniStatus('thinking');
       setAvatarMood('thinking');
-      // 1. Ekranda bos bir asistan mesaji olusturuyoruz ki kelimeler geldikce icini dolduralim
-      const newMsgId = 'assistant-' + Date.now();
-      const streamingAssistantMsg: Message = {
-        id: newMsgId,
-        role: 'assistant',
-        content: '',
-        timestamp: new Date()
-      };
+      
+      const replyText = await generateAIReply(text);
+      console.log('[CHAT-4] AI cevabı geldi:', replyText);
 
-      setMessages(prev => [...prev, streamingAssistantMsg]);
-      let accumulatedText = '';
+      // Update UI with finalized reply
+      setMessages(prev => {
+        if (prev.length === 0) return prev;
+        const updated = [...prev];
+        const lastIdx = updated.length - 1;
+        if (updated[lastIdx].role === 'assistant') {
+          updated[lastIdx] = { ...updated[lastIdx], content: replyText };
+        }
+        return updated;
+      });
 
-      // 2. VoiceService icinde az once yazdigimiz streamChat fonksiyonunu cagiriyoruz
-      const memoryContext = MemoryService.formatMemoriesForSystemInstruction(memories);
-      const systemInstructionWithMemories = "Sen Moni adında, son derece zeki, cana yakın ve profesyonel bir yapay zeka asistanı ve özel kalem yöneticisisin. Sana seslenildiğinde ya da konuşulduğunda, kullanıcıyla kibar, sıcak ve yardımsever bir tonda iletişim kurmalısın. Türkçe konuşmalısın. Cevapların kısa, net, samimi ve sesli okumaya tam uyumlu olmalıdır. Markdown biçimlendirmeleri (kalın yazılar, yıldızlar, listeler vb.) veya okunması zor semboller kullanma, çünkü verdiğin cevaplar doğrudan sesli olarak okunacaktır. Kullanıcının not alma, görev ekleme ve randevu planlama isteklerini başarıyla yönetiyorsun." + memoryContext;
-
-      await voiceService.streamChat(text, (chunk: string) => {
-        accumulatedText += chunk;
-
-        // Ekrana gelen her yeni kelimeyi anlik yansitiyoruz by updating the last message
-        setMessages(prev => {
-          if (prev.length === 0) return prev;
-          const updated = [...prev];
-          const lastIdx = updated.length - 1;
-          if (updated[lastIdx].role === 'assistant') {
-            updated[lastIdx] = { ...updated[lastIdx], content: accumulatedText };
-          }
-          return updated;
-        });
-      }, geminiApiKey, messages, systemInstructionWithMemories);
-
-      // 3. Akis tamamen bittiginde nihai mesaji veritabanina kaydediyoruz
       const finalAiMsg: Message = {
         id: newMsgId,
         role: 'assistant',
-        content: accumulatedText,
+        content: replyText,
         timestamp: new Date()
       };
       await databaseService.saveChatMessage(finalAiMsg);
+      console.log('[CHAT-5] Assistant mesajı state’e eklendi');
+
+      setMoniStatus('idle');
+      setAvatarMood('neutral');
 
       // Moni'nin sesiyle nihai cevabı seslendiriyoruz
-      if (autoSpeakEnabled && accumulatedText.trim()) {
+      if (autoSpeakEnabled && replyText.trim()) {
+        console.log('[CHAT-6] TTS başlatıldı');
         setCurrentlySpeakingMsgId(newMsgId);
-        speakText(accumulatedText, () => {
+        speakText(replyText, () => {
           setCurrentlySpeakingMsgId(null);
           setMoniStatus('idle');
           setAvatarMood('neutral');
         }, undefined, "wake");
       } else {
-        setMoniStatus('idle');
-        setAvatarMood('neutral');
         if (isWakeWordListening) startWakeWordRecognition();
       }
 
-    } catch (e) {
-      console.error('Canli akis guncellemesinde hata olustu:', e);
-      // Stream error — show toast + brief avatar alert, then auto-reset to idle
-      showTemporaryError(
-        'Yanıt alınırken bir sorun oluştu. Lütfen tekrar deneyin.',
-        'Akış yanıt hatası — idle durumuna dönülüyor.'
-      );
+    } catch (e: any) {
+      console.error('[MONI CHAT ERROR] Canli akis guncellemesinde hata olustu:', e);
+      setMoniStatus('idle');
+      setAvatarMood('neutral');
       setCurrentlySpeakingMsgId(null);
       isSpeakingRef.current = false;
+
+      let errorMsgText = `Bağlantı hatası oluştu: ${e.message || e}`;
+      if (!geminiApiKey || !geminiApiKey.trim()) {
+        errorMsgText = "AI bağlantısı aktif değil. Lütfen API anahtarlarını kontrol edin.";
+      }
+
+      setMessages(prev => {
+        if (prev.length === 0) return prev;
+        const updated = [...prev];
+        const lastIdx = updated.length - 1;
+        if (updated[lastIdx].role === 'assistant') {
+          updated[lastIdx] = { ...updated[lastIdx], content: errorMsgText };
+        }
+        return updated;
+      });
+
+      const errorAiMsg: Message = {
+        id: newMsgId,
+        role: 'assistant',
+        content: errorMsgText,
+        timestamp: new Date()
+      };
+      await databaseService.saveChatMessage(errorAiMsg);
+      console.log('[CHAT-5] Assistant mesajı (hata) state’e eklendi');
+      console.log('[AI-7] Assistant state güncellendi (Hata)');
+
+      speakText(errorMsgText, undefined, undefined, "wake");
     }
   };
 

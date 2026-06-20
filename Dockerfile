@@ -6,10 +6,12 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Stage 2: Serve the compiled static files
+# Stage 2: Serve the compiled static files and run Express server
 FROM node:20-alpine
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
 COPY --from=builder /app/dist ./dist
-RUN npm install -g sirv-cli
-EXPOSE 3001
-CMD ["sirv", "dist", "--port", "3001", "--host", "0.0.0.0", "--single"]
+COPY server.js ./
+EXPOSE 5000
+CMD ["node", "server.js"]

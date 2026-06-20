@@ -21,24 +21,6 @@
   transition: filter 0.5s ease;
 }
 
-/* 1. Blink Mask Overlay */
-.moni-pseudo-blink-overlay {
-  position: absolute;
-  top: 36%; /* Estimated eye position */
-  left: 30%;
-  right: 30%;
-  height: 6%;
-  background: rgba(7, 8, 13, 0.98);
-  border-radius: 50%;
-  pointer-events: none;
-  opacity: 0;
-  filter: blur(1.5px);
-}
-
-.moni-pseudo-avatar-container.animated .moni-pseudo-blink-overlay {
-  animation: pseudo-eye-blink 6s infinite ease-in-out;
-}
-
 /* 2. Cyberneck Pulsing Light Lines Overlay */
 .moni-pseudo-neck-light {
   position: absolute;
@@ -194,10 +176,6 @@
 .moni-pseudo-avatar-container.speaking.animated .moni-pseudo-bar.bar-5 { animation: pseudo-bar-wave-5 0.5s infinite alternate ease-in-out; }
 
 /* Keyframes */
-@keyframes pseudo-eye-blink {
-  0%, 90%, 100% { opacity: 0; }
-  93%, 95% { opacity: 0.95; }
-}
 
 @keyframes pseudo-neck-pulse {
   0% { opacity: 0.1; box-shadow: 0 0 4px var(--accent-cyan); }

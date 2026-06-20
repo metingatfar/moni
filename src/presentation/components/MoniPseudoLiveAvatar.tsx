@@ -77,9 +77,6 @@ export const MoniPseudoLiveAvatar: React.FC<MoniPseudoLiveAvatarProps> = ({
       {/* 2. Cyberneck Light Lines Overlay */}
       {animationsEnabled && <div className="moni-pseudo-neck-light" />}
 
-      {/* 3. Eye Blinking Overlay */}
-      {animationsEnabled && <div className="moni-pseudo-blink-overlay" />}
-
       {/* 4. Listening Radar Expansion Rings */}
       {status === 'listening' && animationsEnabled && (
         <>

@@ -50,50 +50,66 @@ export class VoiceService {
     history?: any[],
     systemInstruction?: string
   ): Promise<void> {
+    const backendUrl = (import.meta.env && import.meta.env.VITE_BACKEND_API_URL) 
+      ? import.meta.env.VITE_BACKEND_API_URL.replace(/\/api$/, '') 
+      : 'http://localhost:5000';
+    
+    console.log('[AI-3] URL:', `${backendUrl}/api/chat/stream`);
+
+    let response;
     try {
-      const backendUrl = (import.meta.env && import.meta.env.VITE_BACKEND_API_URL) 
-        ? import.meta.env.VITE_BACKEND_API_URL.replace(/\/api$/, '') 
-        : 'http://localhost:5000';
-      const response = await fetch(`${backendUrl}/api/chat/stream`, {
+      response = await fetch(`${backendUrl}/api/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ message, apiKey, history, systemInstruction }),
       });
+    } catch (netErr: any) {
+      console.error('[MONI AI] Network error connecting to backend:', netErr);
+      throw new Error(`Network Error: ${netErr.message || 'Connection refused/failed'}`);
+    }
 
-      if (!response.body) throw new Error('ReadableStream desteklenmiyor.');
+    console.log('[AI-4] Response Status:', response.status);
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
+    if (!response.ok) {
+      let errBody = '';
+      try {
+        errBody = await response.text();
+      } catch (_) {}
+      console.error('[AI-5] Response Body:', errBody);
+      throw new Error(`HTTP Error ${response.status}: ${errBody || response.statusText}`);
+    }
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
+    if (!response.body) throw new Error('ReadableStream desteklenmiyor.');
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
 
-        // Store incomplete line in buffer
-        buffer = lines.pop() || '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
 
-        for (const line of lines) {
-          const cleanedLine = line.trim();
-          if (cleanedLine.startsWith('data: ')) {
-            try {
-              const jsonData = JSON.parse(cleanedLine.substring(6));
-              if (jsonData.text) {
-                onChunk(jsonData.text);
-              }
-            } catch (e) {
-              // Ignore parse errors
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+
+      // Store incomplete line in buffer
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const cleanedLine = line.trim();
+        if (cleanedLine.startsWith('data: ')) {
+          try {
+            const jsonData = JSON.parse(cleanedLine.substring(6));
+            if (jsonData.text) {
+              onChunk(jsonData.text);
             }
+          } catch (e) {
+            // Ignore parse errors
           }
         }
       }
-    } catch (error) {
-      console.error('Canli akis esnasinda hata olustu:', error);
     }
   }
 
@@ -147,8 +163,8 @@ export class VoiceService {
 
   /**
    * speak — TTS priority chain:
-   *   1. OpenAI TTS via /api/tts backend (best quality, consistent female voice)
-   *   2. Google Cloud TTS (if VITE_GOOGLE_TTS_API_KEY is set, non-iOS/Safari)
+   *   1. ElevenLabs TTS via /api/tts backend
+   *   2. Google Cloud TTS
    *   3. Browser Web Speech API (local fallback, quality varies by device)
    */
   public async speak(
@@ -165,7 +181,7 @@ export class VoiceService {
       /Safari/.test(navigator.userAgent) &&
       !/Chrome/.test(navigator.userAgent);
 
-    // ── 1. Try OpenAI TTS via backend ─────────────────────────────────────
+    // ── 1. Try ElevenLabs TTS via backend ─────────────────────────────────────
     try {
       const audio = await this.openAiTts(text, options);
 
@@ -173,18 +189,26 @@ export class VoiceService {
         if (onEnd) onEnd();
       };
       audio.onerror = (errEvent: any) => {
-        console.error('[MONI TTS] OpenAI ses oynatma hatası:', errEvent);
-        console.warn('[MONI TTS] OpenAI başarısız → Google/Web Speech fallback devreye giriyor.');
-        // Fallback to Web Speech API on playback error
+        console.warn('[MONI TTS] ElevenLabs çalma hatası. Yerel ses motoru devreye giriyor.', errEvent);
         this.speakWithLocalSpeechSynthesis(text, profile, onEnd, options, onError);
       };
 
       await audio.play();
-      console.log('[MONI TTS] OpenAI Nova kadın sesi aktif');
+      console.log('[MONI TTS] ElevenLabs kadın sesi aktif');
       return; // Success
     } catch (e: any) {
-      console.warn('[MONI TTS] OpenAI TTS başarısız, Google Cloud TTS deneniyor:', e.message);
-      console.warn('[MONI TTS] OpenAI başarısız → Google/Web Speech fallback devreye giriyor.');
+      const isPaidPlanError = e.message && (e.message.includes('402') || e.message.includes('payment_required') || e.message.includes('paid_plan'));
+      
+      if (isPaidPlanError) {
+        console.warn('[MONI TTS] ElevenLabs Premium doğal kadın sesi için plan yükseltilmeli. Yerel ses kullanılıyor.');
+        // Show info notification instead of red error popup
+        const notificationEvent = new CustomEvent('moni_info_notification', {
+          detail: { message: 'Premium doğal kadın sesi için ElevenLabs planı gerekir. Şimdilik yerel ses kullanılıyor.' }
+        });
+        window.dispatchEvent(notificationEvent);
+      } else {
+        console.warn('[MONI TTS] ElevenLabs TTS başarısız, Google Cloud TTS deneniyor:', e.message);
+      }
     }
 
     // ── 2. Try Google Cloud TTS ───────────────────────────────────────────
@@ -322,12 +346,25 @@ export class VoiceService {
       } else if (nonMaleTrVoices.length > 0) {
         selectedVoice = nonMaleTrVoices[0];
         console.log(`[MONI TTS] Türkçe kadın sesi bulunamadı, erkek olmayan Türkçe ses seçildi: ${selectedVoice.name}`);
+        // Dispatch event indicating no Turkish female voice is on device
+        const notificationEvent = new CustomEvent('moni_info_notification', {
+          detail: { message: 'Bu cihazda Türkçe kadın sesi yok, varsayılan ses kullanılıyor.' }
+        });
+        window.dispatchEvent(notificationEvent);
       } else if (trVoices.length > 0) {
         selectedVoice = trVoices[0];
         console.log(`[MONI TTS] Yalnızca Türkçe erkek ses bulundu, kullanılıyor: ${selectedVoice.name}`);
+        const notificationEvent = new CustomEvent('moni_info_notification', {
+          detail: { message: 'Bu cihazda Türkçe kadın sesi yok, varsayılan ses kullanılıyor.' }
+        });
+        window.dispatchEvent(notificationEvent);
       } else {
         selectedVoice = this.voices.find(v => v.default) || this.voices[0] || null;
         console.log(`[MONI TTS] Türkçe ses bulunamadı, sistem varsayılan sesi seçildi: ${selectedVoice ? selectedVoice.name : 'Yok'}`);
+        const notificationEvent = new CustomEvent('moni_info_notification', {
+          detail: { message: 'Bu cihazda Türkçe kadın sesi yok, varsayılan ses kullanılıyor.' }
+        });
+        window.dispatchEvent(notificationEvent);
       }
 
       // 3. Apply custom voice name choice from settings if provided

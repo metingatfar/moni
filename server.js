@@ -9,16 +9,14 @@ app.use(express.json());
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY);
 
-// Ana sayfa test rotası
-app.get('/', (req, res) => {
-    res.send('Moni Antigravity Sunucusu Aktif!');
-});
+// Static home test route removed to let express.static handle dist/index.html properly
+
 
 // Sağlık kontrolü rotası
 app.get('/api/health', (req, res) => {
     res.json({
         ok: true,
-        openaiKey: !!process.env.OPENAI_API_KEY
+        elevenLabsKey: !!process.env.ELEVENLABS_API_KEY
     });
 });
 
@@ -96,9 +94,13 @@ app.post('/api/chat/stream', async (req, res) => {
 });
 
 // ============================================================
-// OpenAI TTS Endpoint — POST /api/tts
+// ElevenLabs TTS Endpoint — POST /api/tts
+// Supports manual ELEVENLABS_VOICE_ID or auto-selecting a premium female/natural voice.
 // API key ONLY lives here on the server. Frontend never sees it.
 // ============================================================
+let cachedVoiceId = null;
+let cachedVoiceName = '';
+
 app.post('/api/tts', async (req, res) => {
     try {
         const { text } = req.body;
@@ -107,43 +109,98 @@ app.post('/api/tts', async (req, res) => {
             return res.status(400).json({ error: 'text alanı boş olamaz.' });
         }
 
-        const openaiKey = process.env.OPENAI_API_KEY;
-        if (!openaiKey) {
-            return res.status(503).json({ error: 'OpenAI API anahtarı sunucuda tanımlı değil.' });
+        const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
+        if (!elevenLabsKey) {
+            return res.status(503).json({ error: 'ElevenLabs API anahtarı sunucuda tanımlı değil.' });
         }
 
-        // Metin çok uzunsa ilk 4096 karakterle sınırla (OpenAI TTS limiti)
-        const safeText = text.trim().slice(0, 4096);
+        // 1. Resolve Voice ID
+        let voiceId = process.env.ELEVENLABS_VOICE_ID || cachedVoiceId;
 
-        const openaiResponse = await fetch('https://api.openai.com/v1/audio/speech', {
+        if (!voiceId) {
+            console.log('[MONI TTS] ElevenLabs Voice ID bulunamadı, ses listesi sorgulanıyor...');
+            try {
+                const voicesResponse = await fetch('https://api.elevenlabs.io/v1/voices', {
+                    method: 'GET',
+                    headers: { 'xi-api-key': elevenLabsKey }
+                });
+
+                if (voicesResponse.ok) {
+                    const voicesData = await voicesResponse.json();
+                    const voices = voicesData.voices || [];
+
+                    // Filter voices: look for female or default high quality voices
+                    let selectedVoice = voices.find(v => 
+                        v.labels && 
+                        v.labels.gender === 'female' && 
+                        (v.labels.language === 'tr' || v.labels.accent === 'turkish')
+                    );
+
+                    // Fallback to general premium female voice
+                    if (!selectedVoice) {
+                        selectedVoice = voices.find(v => v.labels && v.labels.gender === 'female');
+                    }
+
+                    // Ultimate fallback to first available voice
+                    if (!selectedVoice && voices.length > 0) {
+                        selectedVoice = voices[0];
+                    }
+
+                    if (selectedVoice) {
+                        voiceId = selectedVoice.voice_id;
+                        cachedVoiceId = voiceId;
+                        cachedVoiceName = selectedVoice.name;
+                        console.log(`[MONI TTS] Seçilen ElevenLabs sesi: ${cachedVoiceName}`);
+                    }
+                } else {
+                    console.warn(`[MONI TTS] Ses listesi alınamadı (${voicesResponse.status}). Varsayılan ses denenecek.`);
+                }
+            } catch (err) {
+                console.error('[MONI TTS] Ses listesi sorgulama hatası:', err);
+            }
+        }
+
+        // Default voice id fallback (Rachel voice id commonly available) if list fetching failed or yielded empty
+        if (!voiceId) {
+            voiceId = '21m00Tcm4TlvDq8ikWAM';
+            console.log('[MONI TTS] Fallback Voice ID kullanılıyor: Rachel');
+        }
+
+        // Limit length to safe range
+        const safeText = text.trim().slice(0, 4000);
+
+        // Call ElevenLabs Text to Speech API
+        const ttsResponse = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${openaiKey}`,
-                'Content-Type': 'application/json'
+                'xi-api-key': elevenLabsKey,
+                'Content-Type': 'application/json',
+                'accept': 'audio/mpeg'
             },
             body: JSON.stringify({
-                model: 'gpt-4o-mini-tts',
-                voice: 'nova',
-                input: safeText,
-                response_format: 'mp3'
+                text: safeText,
+                model_id: 'eleven_multilingual_v2',
+                voice_settings: {
+                    stability: 0.5,
+                    similarity_boost: 0.75
+                }
             })
         });
 
-        if (!openaiResponse.ok) {
-            const errBody = await openaiResponse.text();
-            console.error('[MONI TTS] OpenAI hatası:', openaiResponse.status, errBody);
-            return res.status(openaiResponse.status).json({
-                error: `OpenAI TTS hatası: ${openaiResponse.status}`
+        if (!ttsResponse.ok) {
+            const errBody = await ttsResponse.text().catch(() => '');
+            console.error('[MONI TTS] ElevenLabs API hatası:', ttsResponse.status, errBody);
+            return res.status(ttsResponse.status).json({
+                error: `ElevenLabs TTS hatası: ${ttsResponse.status}`
             });
         }
 
-        // MP3 binary veriyi doğrudan istemciye aktar
+        // Return MP3 binary stream
         res.setHeader('Content-Type', 'audio/mpeg');
         res.setHeader('Cache-Control', 'no-store');
 
-        // Node 18+ — Response.body bir ReadableStream, pipe ile aktarabiliriz
         const { Readable } = await import('stream');
-        const nodeStream = Readable.fromWeb(openaiResponse.body);
+        const nodeStream = Readable.fromWeb(ttsResponse.body);
         nodeStream.pipe(res);
 
         nodeStream.on('error', (err) => {
@@ -160,7 +217,28 @@ app.post('/api/tts', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+
+// Serve frontend static assets from dist folder and handle SPA routing
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Explicit API route catcher to prevent SPA fallback from overriding missing API calls
+app.use('/api/*', (req, res) => {
+    res.status(404).json({ error: "API endpoint bulunamadı" });
+});
+
+// Serve Vite frontend production build folder
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// Fallback all frontend routes to Vite's index.html
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
+
 app.listen(PORT, () => {
     console.log(`Sunucu ${PORT} portunda basariyla baslatildi.`);
-    console.log(`OpenAI TTS: ${process.env.OPENAI_API_KEY ? '✅ Aktif' : '❌ Anahtar tanımlı değil — /api/tts çalışmaz'}`);
+    console.log(`ElevenLabs TTS: ${process.env.ELEVENLABS_API_KEY ? '✅ Aktif' : '❌ Anahtar tanımlı değil — /api/tts çalışmaz'}`);
 });
