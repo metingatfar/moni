@@ -2659,6 +2659,42 @@ export const MoniDashboard: React.FC = () => {
           {moniStatus === 'idle' && 'Sesli Komut Ver'}
         </button>
 
+        {/* APK Download Button for Android Devices */}
+        <a
+          href="/downloads/moni.apk"
+          download="moni.apk"
+          style={{
+            marginTop: '15px',
+            padding: '10px 20px',
+            background: 'rgba(255, 255, 255, 0.05)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '20px',
+            color: 'rgba(255, 255, 255, 0.7)',
+            fontSize: '0.82rem',
+            fontWeight: '600',
+            textDecoration: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            transition: 'all 0.3s ease',
+            cursor: 'pointer',
+            fontFamily: 'var(--font-sans)',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+            e.currentTarget.style.color = '#fff';
+            e.currentTarget.style.border = '1px solid rgba(255, 255, 255, 0.2)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+            e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
+            e.currentTarget.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+          }}
+        >
+          <span>🤖</span> Android Uygulamasını İndir (.APK)
+        </a>
+
         {typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && (
           <p style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.4)', marginTop: '-12px', marginBottom: '-5px', textAlign: 'center', maxWidth: '320px', lineHeight: '1.2' }}>
             ℹ️ iPhone güvenlik kısıtlamaları nedeniyle asistanı bu butona basarak aktifleştiriniz.

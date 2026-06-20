@@ -4,6 +4,7 @@ const ASSETS = [
   '/index.html',
   '/favicon.svg',
   '/manifest.json',
+  '/manifest.webmanifest',
   '/avatar.png',
   '/merhaba.mp3'
 ];
@@ -33,6 +34,8 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  // Exclude APK package downloads from service worker cache to prevent client memory bloating
+  if (e.request.url.includes('/downloads/')) return;
 
   e.respondWith(
     fetch(e.request)

@@ -169,6 +169,64 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({
       {/* 1. Image Avatar Layout */}
       {avatarType === 'image' ? (
         <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          
+          {/* Radar Ring 1 (Only when listening) */}
+          {status === 'listening' && animationsEnabled && (
+            <div style={{
+              position: 'absolute',
+              width: '105%',
+              height: '105%',
+              borderRadius: '30px',
+              border: `2px solid var(--accent-cyan)`,
+              animation: 'radar-ripple 1.5s infinite linear',
+              pointerEvents: 'none',
+              opacity: getGlowOpacity(0.5)
+            }} />
+          )}
+
+          {/* Radar Ring 2 (Outer Ripple) */}
+          {status === 'listening' && animationsEnabled && (
+            <div style={{
+              position: 'absolute',
+              width: '112%',
+              height: '112%',
+              borderRadius: '36px',
+              border: `1px dashed var(--accent-cyan)`,
+              animation: 'radar-ripple-delay 2s infinite linear',
+              pointerEvents: 'none',
+              opacity: getGlowOpacity(0.3)
+            }} />
+          )}
+
+          {/* Speaking Pulsating Halo */}
+          {status === 'speaking' && animationsEnabled && (
+            <div style={{
+              position: 'absolute',
+              width: '102%',
+              height: '102%',
+              borderRadius: '26px',
+              border: `3px solid var(--accent-purple)`,
+              animation: 'speak-halo-pulse 1s infinite alternate ease-in-out',
+              pointerEvents: 'none',
+              filter: 'blur(3px)',
+              opacity: getGlowOpacity(0.4)
+            }} />
+          )}
+
+          {/* Thinking Concentric Glow Halo */}
+          {status === 'thinking' && animationsEnabled && (
+            <div style={{
+              position: 'absolute',
+              width: '102%',
+              height: '102%',
+              borderRadius: '26px',
+              border: `2px solid #ffd700`,
+              animation: 'thinking-halo-rotate 3s infinite linear',
+              pointerEvents: 'none',
+              opacity: getGlowOpacity(0.5)
+            }} />
+          )}
+
           <img
             src={getImageSrc()}
             alt="Moni Avatar"
@@ -177,7 +235,16 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({
               height: '100%',
               objectFit: 'cover',
               borderRadius: '24px',
-              transition: 'transform 0.3s ease',
+              transition: 'all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)',
+              boxShadow: status === 'listening'
+                ? `0 0 25px rgba(0, 240, 255, ${getGlowOpacity(0.55)})`
+                : status === 'thinking'
+                  ? `0 0 25px rgba(255, 215, 0, ${getGlowOpacity(0.55)})`
+                  : status === 'speaking'
+                    ? `0 0 25px rgba(157, 78, 221, ${getGlowOpacity(0.55)})`
+                    : status === 'error'
+                      ? `0 0 35px rgba(255, 56, 56, ${getGlowOpacity(0.75)})`
+                      : 'none',
               animation: !animationsEnabled 
                 ? 'none' 
                 : status === 'listening'
@@ -255,20 +322,6 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({
                 />
               </svg>
             </div>
-          )}
-
-          {/* Radar ripple visual effect overlay */}
-          {status === 'listening' && animationsEnabled && (
-            <div style={{
-              position: 'absolute',
-              width: '100%',
-              height: '100%',
-              borderRadius: '24px',
-              border: `2px solid var(--accent-cyan)`,
-              animation: 'radar-ripple 1.5s infinite linear',
-              pointerEvents: 'none',
-              opacity: getGlowOpacity(0.7)
-            }} />
           )}
 
           {/* Speaking Audio wave bars on top of image */}
@@ -579,7 +632,22 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({
 
         @keyframes radar-ripple {
           0% { transform: scale(0.98); opacity: 0.7; }
-          100% { transform: scale(1.06); opacity: 0; }
+          100% { transform: scale(1.08); opacity: 0; }
+        }
+
+        @keyframes radar-ripple-delay {
+          0% { transform: scale(0.95); opacity: 0.5; }
+          100% { transform: scale(1.15); opacity: 0; }
+        }
+
+        @keyframes speak-halo-pulse {
+          0% { transform: scale(0.99); opacity: 0.2; box-shadow: 0 0 10px rgba(157, 78, 221, 0.2); }
+          100% { transform: scale(1.03); opacity: 0.6; box-shadow: 0 0 25px rgba(157, 78, 221, 0.6); }
+        }
+
+        @keyframes thinking-halo-rotate {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>
