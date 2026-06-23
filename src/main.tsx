@@ -2,6 +2,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { bootstrapServices } from './core/container/Bootstrap'
+
+bootstrapServices();
 
 // Register Service Worker for PWA mobile installability
 if ('serviceWorker' in navigator) {

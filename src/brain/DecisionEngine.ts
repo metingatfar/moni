@@ -26,7 +26,7 @@ export class DecisionEngine {
   ): Promise<ExecutiveStatus> {
     // 1. Extract active project names from memory categories
     const activeProjects = memories
-      .filter(m => m.category === 'projects')
+      .filter(m => (m.category as string) === 'projects' || (m.category as string) === 'work')
       .map(m => m.content.trim());
 
     // 2. Score and prioritize todos using the PriorityEngine

@@ -5,11 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && npx cap sync",
+    "build": "node prebuild.js && tsc -b && vite build && npx cap sync",
     "start": "node server.js",
     "lint": "eslint .",
     "preview": "vite preview",
-    "auto-push": "node auto-push.js"
+    "auto-push": "node auto-push.js",
+    "backup:local": "node scripts/backup/local-backup.mjs",
+    "backup:check": "node scripts/backup/check-backup.mjs",
+    "release:finish": "node scripts/release/finish-sprint.mjs",
+    "release:push": "node scripts/release/push-release.mjs",
+    "release:status": "node scripts/release/git-snapshot.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.1",
@@ -20,6 +25,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "multer": "^2.2.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

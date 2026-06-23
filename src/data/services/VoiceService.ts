@@ -1,3 +1,5 @@
+import { getEndpoint } from '../../config/api';
+
 export interface SpeechVoice {
   name: string;
   gender: 'female' | 'male';
@@ -48,44 +50,57 @@ export class VoiceService {
     onChunk: (text: string) => void,
     apiKey?: string,
     history?: any[],
-    systemInstruction?: string
+    systemInstruction?: string,
+    provider?: string
   ): Promise<void> {
-    const backendUrl = (import.meta.env && import.meta.env.VITE_BACKEND_API_URL) 
-      ? import.meta.env.VITE_BACKEND_API_URL.replace(/\/api$/, '') 
-      : 'http://localhost:5000';
-    
-    console.log('[AI-3] URL:', `${backendUrl}/api/chat/stream`);
+    const t = () => new Date().toISOString();
+    console.log(`\n======== AI REQUEST [${t()}] ========`);
+    console.log(`[AI-1] Kullanıcı Mesajı:\n"${message}"`);
+    console.log(`[AI-2] ${provider || 'Varsayılan'} isteği hazırlanıyor`);
+    console.log(`[AI-3] Model:\n${provider === 'groq' ? 'llama-3.3-70b-versatile' : 'gemini-2.5-flash'}`);
+
+    const targetUrl = getEndpoint('chat/stream');
+    console.log(`[AI-4] API isteği gönderildi [Target: ${targetUrl}]`);
 
     let response;
     try {
-      response = await fetch(`${backendUrl}/api/chat/stream`, {
+      response = await fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message, apiKey, history, systemInstruction }),
+        body: JSON.stringify({ message, apiKey, history, systemInstruction, provider }),
       });
     } catch (netErr: any) {
+      console.error(`[AI-5] HTTP Status: Network Error [${t()}]`);
       console.error('[MONI AI] Network error connecting to backend:', netErr);
+      console.log('============================\n');
       throw new Error(`Network Error: ${netErr.message || 'Connection refused/failed'}`);
     }
 
-    console.log('[AI-4] Response Status:', response.status);
+    console.log(`[AI-5] HTTP Status:\n${response.status}`);
 
     if (!response.ok) {
       let errBody = '';
       try {
         errBody = await response.text();
       } catch (_) {}
-      console.error('[AI-5] Response Body:', errBody);
+      console.error(`[AI-6] Ham Gemini cevabı (Hata):\n${errBody}`);
+      console.log('============================\n');
       throw new Error(`HTTP Error ${response.status}: ${errBody || response.statusText}`);
     }
 
-    if (!response.body) throw new Error('ReadableStream desteklenmiyor.');
+    console.log('[AI-7] Stream başladı');
+
+    if (!response.body) {
+      console.log('============================\n');
+      throw new Error('ReadableStream desteklenmiyor.');
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
+    let accumulated = '';
 
     while (true) {
       const { value, done } = await reader.read();
@@ -103,6 +118,7 @@ export class VoiceService {
           try {
             const jsonData = JSON.parse(cleanedLine.substring(6));
             if (jsonData.text) {
+              accumulated += jsonData.text;
               onChunk(jsonData.text);
             }
           } catch (e) {
@@ -111,6 +127,35 @@ export class VoiceService {
         }
       }
     }
+
+    console.log('[AI-8] Stream tamamlandı');
+    console.log(`[AI-6] Ham Gemini cevabı:\n"${accumulated}"`);
+    console.log(`[AI-9] Toplam karakter:\n${accumulated.length}`);
+    console.log('[AI-10] TTS gönderiliyor');
+    console.log('============================\n');
+  }
+
+  /**
+   * Sends audio blob to backend Deepgram STT endpoint.
+   */
+  public async deepgramStt(audioBlob: Blob): Promise<string> {
+    const url = getEndpoint('stt/deepgram');
+
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'record.wav');
+
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Deepgram STT failed (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    return data.transcript || '';
   }
 
   /**
@@ -122,10 +167,7 @@ export class VoiceService {
     text: string,
     options?: { rate?: number; volume?: number }
   ): Promise<HTMLAudioElement> {
-    const base = (import.meta.env && import.meta.env.VITE_BACKEND_API_URL) || "http://localhost:5000/api";
-    // Construct base URL ensuring no double '/api/api' segment
-    const apiBase = base.endsWith("/api") ? base : `${base.replace(/\/$/, '')}/api`;
-    const url = `${apiBase}/tts`;
+    const url = getEndpoint('tts');
     
     console.log('[MONI TTS] Backend URL:', url);
 
@@ -203,7 +245,7 @@ export class VoiceService {
         console.warn('[MONI TTS] ElevenLabs Premium doğal kadın sesi için plan yükseltilmeli. Yerel ses kullanılıyor.');
         // Show info notification instead of red error popup
         const notificationEvent = new CustomEvent('moni_info_notification', {
-          detail: { message: 'Premium doğal kadın sesi için ElevenLabs planı gerekir. Şimdilik yerel ses kullanılıyor.' }
+          detail: { message: 'Kota doldu, yerel ses motoru kullanılıyor.' }
         });
         window.dispatchEvent(notificationEvent);
       } else {

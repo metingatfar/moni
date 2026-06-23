@@ -1,5 +1,9 @@
 import type { MemoryItem, MemoryCategory } from '../domain/entities/MemoryItem';
+import { getEndpoint } from '../config/api';
 
+/**
+ * @deprecated Use LongTermMemory and ShortTermMemory instead.
+ */
 export class MemoryService {
   /**
    * Explicit keywords required to trigger saving to memory.
@@ -56,7 +60,7 @@ export class MemoryService {
       return '';
     }
 
-    const categories: Record<MemoryCategory, string[]> = {
+    const categories: any = {
       name: [],
       job: [],
       projects: [],
@@ -85,7 +89,7 @@ export class MemoryService {
       context += `- Mesleği/Görevi: ${categories.job.join(', ')}\n`;
     }
     if (categories.projects.length > 0) {
-      context += `- Üzerinde Çalıştığı Projeler: ${categories.projects.map(p => `"${p}"`).join(', ')}\n`;
+      context += `- Üzerinde Çalıştığı Projeler: ${categories.projects.map((p: any) => `"${p}"`).join(', ')}\n`;
     }
     if (categories.habits.length > 0) {
       context += `- Alışkanlıkları: ${categories.habits.join('; ')}\n`;
@@ -116,7 +120,7 @@ export class MemoryService {
   public static async extractMemoryFromText(
     text: string,
     apiKey?: string
-  ): Promise<{ category: MemoryCategory; content: string } | null> {
+  ): Promise<{ category: any; content: string } | null> {
     
     // Clean text from triggers to isolate the core fact
     let cleanedText = text;
@@ -128,20 +132,17 @@ export class MemoryService {
     // Remove punctuation and cleanup whitespace
     cleanedText = cleanedText.replace(/^[:\-,\s]+/, '').replace(/[:\-,\s]+$/, '').trim();
 
-    if (apiKey) {
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
-                    {
-                      text: `Aşağıdaki Türkçe ifadeden kullanıcının hafızaya kaydetmek istediği bilgiyi çıkar ve uygun kategoriyi seç.
+    // Try AI extraction using backend endpoint first
+    try {
+      const targetUrl = getEndpoint('chat/complete');
+
+      const provider = typeof window !== 'undefined' ? (localStorage.getItem('moni_active_provider') || 'gemini') : 'gemini';
+
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Aşağıdaki Türkçe ifadeden kullanıcının hafızaya kaydetmek istediği bilgiyi çıkar ve uygun kategoriyi seç.
 Kategoriler: 
 - 'name' (kullanıcının adı/ismi)
 - 'job' (kullanıcının mesleği/görevi)
@@ -158,37 +159,38 @@ Kategoriler:
   "content": "özetlenmiş ve netleştirilmiş bilgi içeriği (örneğin: 'Kahveyi şekersiz içmeyi sever')"
 }
 
-İfade: "${cleanedText}"`
-                    }
-                  ]
-                }
-              ],
-              generationConfig: {
-                temperature: 0.1,
-                maxOutputTokens: 150
-              }
-            })
-          }
-        );
+İfade: "${cleanedText}"`,
+          apiKey,
+          provider
+        })
+      });
 
-        if (response.ok) {
-          const data = await response.json();
-          let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          
-          // Clean json from markdown wrappers if model returned it as a block
-          jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-          
-          const parsed = JSON.parse(jsonText);
-          if (parsed.category && parsed.content) {
-            return {
-              category: parsed.category as MemoryCategory,
-              content: parsed.content.trim()
-            };
-          }
+      if (response.status === 404) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('moni_info_notification', {
+            detail: { message: 'Backend güncel değil veya yanlış API adresine bağlanıldı.' }
+          }));
         }
-      } catch (e) {
-        console.error('MemoryService: AI extraction failed, falling back to rule-based parser.', e);
+        throw new Error("Backend güncel değil veya yanlış API adresine bağlanıldı.");
       }
+
+      if (response.ok) {
+        const data = await response.json();
+        let jsonText = data.text || '';
+        
+        // Clean json from markdown wrappers if model returned it as a block
+        jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        const parsed = JSON.parse(jsonText);
+        if (parsed.category && parsed.content) {
+          return {
+            category: parsed.category as MemoryCategory,
+            content: parsed.content.trim()
+          };
+        }
+      }
+    } catch (e) {
+      console.error('MemoryService: AI extraction failed, falling back to rule-based parser.', e);
     }
 
     // Fallback Rule-based / Regex Parser

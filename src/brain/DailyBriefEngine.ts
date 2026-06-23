@@ -1,7 +1,11 @@
 import type { MemoryItem } from '../domain/entities/MemoryItem';
 import type { ScoredTodo } from './PriorityEngine';
 import type { Reminder } from '../domain/entities/Reminder';
+import { getEndpoint } from '../config/api';
 
+/**
+ * @deprecated Use Planner and ExecutiveBrain instead.
+ */
 export class DailyBriefEngine {
   /**
    * Generates the personalized Daily Brief text.
@@ -26,10 +30,10 @@ export class DailyBriefEngine {
     }
 
     // Extract user profile from memories
-    const nameMemory = memories.find(m => m.category === 'name');
+    const nameMemory = memories.find(m => (m.category as string) === 'name' || (m.category as string) === 'identity');
     const userName = nameMemory ? nameMemory.content.trim() : '';
 
-    const projectMemories = memories.filter(m => m.category === 'projects');
+    const projectMemories = memories.filter(m => (m.category as string) === 'projects' || (m.category as string) === 'work');
     const activeProjects = projectMemories.map(m => m.content.trim());
 
     // Count today's tasks and meetings
@@ -41,43 +45,51 @@ export class DailyBriefEngine {
 
     const topTodo = incompleteTodos.length > 0 ? incompleteTodos[0] : null;
 
-    // 2. If API Key is present, attempt LLM briefing generation
-    if (apiKey && apiKey.trim()) {
-      try {
-        const prompt = this.buildLLMPrompt({
-          greeting,
-          userName,
-          todoCount: incompleteTodos.length,
-          reminderCount: todayReminders.length,
-          activeProjects,
-          topTodo: topTodo ? topTodo.task : '',
-          timeStr: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        });
+    // 2. Attempt LLM briefing generation using backend
+    try {
+      const prompt = this.buildLLMPrompt({
+        greeting,
+        userName,
+        todoCount: incompleteTodos.length,
+        reminderCount: todayReminders.length,
+        activeProjects,
+        topTodo: topTodo ? topTodo.task : '',
+        timeStr: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      });
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.5,
-              maxOutputTokens: 250
-            }
-          })
-        });
+      const targetUrl = getEndpoint('chat/complete');
 
-        if (response.ok) {
-          const data = await response.json();
-          let briefText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          briefText = briefText.replace(/[\*\_#`\-]/g, '').trim(); // Strip formatting for speech compatibility
-          if (briefText) {
-            return briefText;
-          }
+      const provider = typeof window !== 'undefined' ? (localStorage.getItem('moni_active_provider') || 'gemini') : 'gemini';
+
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: prompt,
+          apiKey,
+          provider
+        })
+      });
+
+      if (response.status === 404) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('moni_info_notification', {
+            detail: { message: 'Backend güncel değil veya yanlış API adresine bağlanıldı.' }
+          }));
         }
-      } catch (e) {
-        console.error('DailyBriefEngine: Gemini briefing generation failed, falling back to rule-based template.', e);
+        throw new Error("Backend güncel değil veya yanlış API adresine bağlanıldı.");
       }
+
+      if (response.ok) {
+        const data = await response.json();
+        let briefText = data.text || '';
+        briefText = briefText.replace(/[\*\_#`\-]/g, '').trim(); // Strip formatting for speech compatibility
+        if (briefText) {
+          return briefText;
+        }
+      }
+    } catch (e) {
+      console.error('DailyBriefEngine: briefing generation failed, falling back to rule-based template.', e);
     }
 
     // 3. Offline Rule-based Local Fallback Briefing

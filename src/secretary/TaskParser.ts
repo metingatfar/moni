@@ -8,6 +8,9 @@ export interface ParsedTask {
   description?: string;
 }
 
+/**
+ * @deprecated Use TaskPlanner instead.
+ */
 export class TaskParser {
   /**
    * Parses a task command from Turkish natural language.
@@ -17,20 +20,19 @@ export class TaskParser {
     activeProjects: string[],
     apiKey?: string
   ): Promise<ParsedTask> {
-    if (apiKey) {
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
-                    {
-                      text: `Aşağıdaki Türkçe ifadeden yapılacak bir iş/görev (Todo) bilgisini analiz et ve JSON formatında çıkar.
+    try {
+      const backendUrl = (import.meta.env && import.meta.env.VITE_BACKEND_API_URL) 
+        ? import.meta.env.VITE_BACKEND_API_URL.replace(/\/api$/, '') 
+        : 'http://localhost:5000';
+      const targetUrl = `${backendUrl}/api/chat/complete`;
+
+      const provider = typeof window !== 'undefined' ? (localStorage.getItem('moni_active_provider') || 'gemini') : 'gemini';
+
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Aşağıdaki Türkçe ifadeden yapılacak bir iş/görev (Todo) bilgisini analiz et ve JSON formatında çıkar.
 Projeler Listesi: ${JSON.stringify(activeProjects)}
 Eğer ifadedeki iş bu projelerden biriyle ilgiliyse "project" alanına projeyi yaz.
 Tarih/saat açıkça belirtilmemişse "dateTime" alanını null döndür. Belirtildiyse ISO string olarak döndür.
@@ -45,36 +47,37 @@ Skor önceliğini seç: 'high' (yüksek, acil, hemen, kritik), 'low' (düşük, 
   "description": "görev açıklaması" veya null
 }
 
-İfade: "${text}"`
-                    }
-                  ]
-                }
-              ],
-              generationConfig: {
-                temperature: 0.1,
-                maxOutputTokens: 200
-              }
-            })
-          }
-        );
+İfade: "${text}"`,
+          apiKey,
+          provider
+        })
+      });
 
-        if (response.ok) {
-          const data = await response.json();
-          let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-          
-          const parsed = JSON.parse(jsonText);
-          return {
-            task: parsed.task || 'Yeni Görev',
-            dateTime: parsed.dateTime ? new Date(parsed.dateTime) : null,
-            priority: parsed.priority || 'medium',
-            project: parsed.project || undefined,
-            description: parsed.description || undefined
-          };
+      if (response.status === 404) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('moni_info_notification', {
+            detail: { message: 'Backend güncel değil veya yanlış API adresine bağlanıldı.' }
+          }));
         }
-      } catch (e) {
-        console.error('TaskParser: AI extraction failed, fallback to rules.', e);
+        throw new Error("Backend güncel değil veya yanlış API adresine bağlanıldı.");
       }
+
+      if (response.ok) {
+        const data = await response.json();
+        let jsonText = data.text || '';
+        jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        const parsed = JSON.parse(jsonText);
+        return {
+          task: parsed.task || 'Yeni Görev',
+          dateTime: parsed.dateTime ? new Date(parsed.dateTime) : null,
+          priority: parsed.priority || 'medium',
+          project: parsed.project || undefined,
+          description: parsed.description || undefined
+        };
+      }
+    } catch (e) {
+      console.error('TaskParser: AI extraction failed, fallback to rules.', e);
     }
 
     // Fallback Rule-Based Parser

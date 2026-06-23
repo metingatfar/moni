@@ -17,6 +17,9 @@ export interface SecretaryResult {
   waitingFor?: 'confirmation' | 'date_clarification';
 }
 
+/**
+ * @deprecated Use Planner and ExecutiveBrain instead.
+ */
 export class SecretaryService {
   /**
    * Processes a natural language user command, determining if it should be saved, confirmed, or clarified.

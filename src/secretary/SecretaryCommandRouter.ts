@@ -1,4 +1,5 @@
 import { DateParserHelper } from './DateParserHelper';
+import { getEndpoint } from '../config/api';
 
 export type CommandType = 'task' | 'reminder' | 'meeting' | 'note' | 'chat';
 
@@ -13,20 +14,27 @@ export class SecretaryCommandRouter {
    * Routes the user message to determines the command type and clarity.
    */
   public static async route(text: string, apiKey?: string): Promise<RouteResult> {
-    if (apiKey) {
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
-                    {
-                      text: `Aşağıdaki Türkçe ifadeye göre niyet (intent) tespiti yap ve JSON olarak çıkar.
+    const textLower = text.toLowerCase().trim();
+    const greetings = ['merhaba', 'selam', 'günaydın', 'iyi akşamlar', 'nasılsın', 'moni', 'hey moni', 'merhaba moni'];
+    const isGreeting = greetings.some(g => textLower === g) || 
+                       textLower.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim() === "merhaba moni" ||
+                       textLower.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim() === "hey moni" ||
+                       textLower.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim() === "moni";
+
+    if (isGreeting) {
+      return { type: 'chat', isClear: true };
+    }
+
+    try {
+      const targetUrl = getEndpoint('chat/complete');
+
+      const provider = typeof window !== 'undefined' ? (localStorage.getItem('moni_active_provider') || 'gemini') : 'gemini';
+
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Aşağıdaki Türkçe ifadeye göre niyet (intent) tespiti yap ve JSON olarak çıkar.
 Niyet Türleri:
 - 'task' (kullanıcı görev eklemek, yapılacaklar listesine iş yazmak istiyor)
 - 'reminder' (kullanıcı kendine bir şeyi hatırlatmak istiyor)
@@ -46,34 +54,35 @@ Netlik Analizi ("isClear"):
   "waitingFor": "confirmation" veya "date_clarification" veya null
 }
 
-İfade: "${text}"`
-                    }
-                  ]
-                }
-              ],
-              generationConfig: {
-                temperature: 0.1,
-                maxOutputTokens: 150
-              }
-            })
-          }
-        );
+İfade: "${text}"`,
+          apiKey,
+          provider
+        })
+      });
 
-        if (response.ok) {
-          const data = await response.json();
-          let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-
-          const parsed = JSON.parse(jsonText);
-          return {
-            type: parsed.type as CommandType,
-            isClear: parsed.isClear === true,
-            waitingFor: parsed.waitingFor || undefined
-          };
+      if (response.status === 404) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('moni_info_notification', {
+            detail: { message: 'Backend güncel değil veya yanlış API adresine bağlanıldı.' }
+          }));
         }
-      } catch (e) {
-        console.error('SecretaryCommandRouter: AI routing failed, falling back to rules.', e);
+        throw new Error("Backend güncel değil veya yanlış API adresine bağlanıldı.");
       }
+
+      if (response.ok) {
+        const data = await response.json();
+        let jsonText = data.text || '';
+        jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+
+        const parsed = JSON.parse(jsonText);
+        return {
+          type: parsed.type as CommandType,
+          isClear: parsed.isClear === true,
+          waitingFor: parsed.waitingFor || undefined
+        };
+      }
+    } catch (e) {
+      console.error('SecretaryCommandRouter: AI routing failed, falling back to rules.', e);
     }
 
     // Fallback Rule-Based Routing
@@ -84,7 +93,16 @@ Netlik Analizi ("isClear"):
    * Offline rule-based router for Secretary Engine.
    */
   private static ruleBasedRoute(text: string): RouteResult {
-    const textLower = text.toLowerCase();
+    const textLower = text.toLowerCase().trim();
+    const greetings = ['merhaba', 'selam', 'günaydın', 'iyi akşamlar', 'nasılsın', 'moni', 'hey moni', 'merhaba moni'];
+    const isGreeting = greetings.some(g => textLower === g) || 
+                       textLower.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim() === "merhaba moni" ||
+                       textLower.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim() === "hey moni" ||
+                       textLower.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim() === "moni";
+
+    if (isGreeting) {
+      return { type: 'chat', isClear: true };
+    }
 
     // 1. Detect Note
     const isNote = [

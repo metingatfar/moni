@@ -1,6 +1,9 @@
 import type { ScoredTodo } from './PriorityEngine';
 import type { Reminder } from '../domain/entities/Reminder';
 
+/**
+ * @deprecated Use Planner and ExecutiveBrain instead.
+ */
 export class RecommendationEngine {
   /**
    * Generates actionable suggestions in Turkish based on current tasks and agenda.

@@ -1,0 +1,24 @@
+{
+  "backupId": "bk-1782227414003",
+  "version": "1.0.0",
+  "sprint": "Sprint 3.6.1",
+  "createdAt": "2026-06-23T15:10:14.003Z",
+  "includedSections": [
+    "src",
+    "package.json",
+    "package-lock.json",
+    "scripts"
+  ],
+  "excludedSections": [
+    "node_modules",
+    "dist",
+    ".env",
+    "backups/*.zip",
+    "secrets"
+  ],
+  "checksum": "checksum-3dddf",
+  "size": 443369,
+  "backupType": "local",
+  "ownerId": "usr-metin-gatfar",
+  "ownerName": "Metin GATFAR"
+}

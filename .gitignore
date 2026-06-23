@@ -42,3 +42,7 @@ service-account.json
 firebase-admin.json
 credentials.json
 *.json.service
+
+# Zip backups & secret directories
+backups/*.zip
+secrets/

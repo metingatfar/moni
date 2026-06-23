@@ -1,94 +1,199 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getProvider, getAvailableProviders, getDefaultProvider } from './providers/index.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY);
-
 // Static home test route removed to let express.static handle dist/index.html properly
 
+
+import multer from 'multer';
+const upload = multer();
 
 // Sağlık kontrolü rotası
 app.get('/api/health', (req, res) => {
     res.json({
         ok: true,
-        elevenLabsKey: !!process.env.ELEVENLABS_API_KEY
+        elevenLabsKey: !!process.env.ELEVENLABS_API_KEY,
+        deepgramKey: !!process.env.DEEPGRAM_API_KEY,
+        geminiKey: !!process.env.GEMINI_API_KEY,
+        groqKey: !!process.env.GROQ_API_KEY
     });
+});
+
+// Kullanılabilir sağlayıcılar listesi
+app.get('/api/providers', (req, res) => {
+    res.json({
+        available: getAvailableProviders(),
+        default: getDefaultProvider()
+    });
+});
+
+// Deepgram STT Endpoint — POST /api/stt/deepgram
+app.post('/api/stt/deepgram', upload.single('audio'), async (req, res) => {
+    try {
+        const deepgramKey = process.env.DEEPGRAM_API_KEY;
+        if (!deepgramKey) {
+            console.error('[DG-STT-ERR] Deepgram API key missing on server');
+            return res.status(503).json({ error: 'Deepgram API anahtarı sunucuda tanımlı değil.' });
+        }
+
+        if (!req.file || !req.file.buffer) {
+            console.error('[DG-STT-ERR] No audio file uploaded');
+            return res.status(400).json({ error: 'Ses dosyası yüklenemedi.' });
+        }
+
+        const model = process.env.DEEPGRAM_STT_MODEL || 'nova-3';
+        const lang = process.env.DEEPGRAM_LANGUAGE || 'tr';
+
+        const dgResponse = await fetch(`https://api.deepgram.com/v1/listen?model=${model}&language=${lang}&smart_format=true`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Token ${deepgramKey}`,
+                'Content-Type': 'audio/wav'
+            },
+            body: req.file.buffer
+        });
+
+        if (!dgResponse.ok) {
+            const errBody = await dgResponse.text().catch(() => '');
+            console.error('[DG-STT-ERR] Deepgram API error:', dgResponse.status, errBody);
+            return res.status(dgResponse.status).json({ error: `Deepgram API Hatası: ${dgResponse.status}` });
+        }
+
+        const data = await dgResponse.json();
+        const transcript = data.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+        console.log(`[DG-STT-3] Deepgram transcript: "${transcript}"`);
+
+        res.json({ transcript });
+    } catch (err) {
+        console.error('[DG-STT-ERR] Server error:', err);
+        res.status(500).json({ error: 'Ses işlenirken sunucuda bir hata oluştu.' });
+    }
 });
 
 // Canlı Akış (Stream) Rotası - Mobil uygulaman buraya bağlanacak
 app.post('/api/chat/stream', async (req, res) => {
     try {
-        const { message, history, systemInstruction, apiKey } = req.body;
+        const { message, history, systemInstruction, apiKey, provider } = req.body;
 
         if (!message) {
             return res.status(400).json({ error: "Mesaj bos olamaz." });
         }
 
-        // Dinamik olarak gelen API anahtarını kullan veya çevresel değişkene düş
-        const activeKey = apiKey || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-        if (!activeKey) {
-            // Eğer geçerli bir anahtar yoksa hata ver
-            return res.status(400).json({ error: "Geçerli bir Gemini API anahtarı tanımlanmamış." });
-        }
-
-        const dynamicGenAI = new GoogleGenerativeAI(activeKey);
-
         const defaultInstruction = "Sen Moni adında, son derece zeki, cana yakın ve profesyonel bir yapay zeka asistanı ve özel kalem yöneticisisin. Sana seslenildiğinde ya da konuşulduğunda, kullanıcıyla kibar, sıcak ve yardımsever bir tonda iletişim kurmalısın. Türkçe konuşmalısın. Cevapların kısa, net, samimi ve sesli okumaya tam uyumlu olmalıdır. Markdown biçimlendirmeleri (kalın yazılar, yıldızlar, listeler vb.) veya okunması zor semboller kullanma, çünkü verdiğin cevaplar doğrudan sesli olarak okunacaktır. Kullanıcının not alma, görev ekleme ve randevu planlama isteklerini başarıyla yönetiyorsun.";
-        
         const activeInstruction = systemInstruction || defaultInstruction;
 
-        // Gemini 2.5 Flash modelini çağırıyoruz
-        const model = dynamicGenAI.getGenerativeModel({ 
-            model: "gemini-2.5-flash",
-            systemInstruction: activeInstruction
-        });
+        let selectedProviderName = provider || getDefaultProvider();
+        let providerInstance;
 
-        // Sohbet geçmişini formatlıyoruz
-        let contents = [];
-        if (history && Array.isArray(history)) {
-            contents = history
-                .filter(m => m.content && m.content.trim() !== '' && m.role !== 'system')
-                .map(m => ({
-                    role: m.role === 'user' ? 'user' : 'model',
-                    parts: [{ text: m.content }]
-                }));
+        try {
+            providerInstance = getProvider(selectedProviderName);
+        } catch (e) {
+            selectedProviderName = getDefaultProvider();
+            providerInstance = getProvider(selectedProviderName);
         }
 
-        // Mevcut kullanıcı mesajını geçmişin sonuna ekliyoruz
-        contents.push({
-            role: 'user',
-            parts: [{ text: message }]
-        });
+        console.log(`[LLM-1] İstek başlatıldı. Sağlayıcı: ${selectedProviderName}`);
 
-        // En son 15 mesajı sınır olarak alıyoruz
-        if (contents.length > 15) {
-            contents = contents.slice(-15);
+        try {
+            await providerInstance.chatStream({
+                message,
+                history,
+                systemInstruction: activeInstruction,
+                apiKey,
+                res
+            });
+        } catch (err) {
+            console.warn(`[LLM-WARN] ${selectedProviderName} başarısız oldu, failover deneniyor... Hata:`, err.message);
+
+            const otherProviderName = selectedProviderName === 'groq' ? 'gemini' : 'groq';
+            try {
+                const fallbackInstance = getProvider(otherProviderName);
+                if (fallbackInstance.isAvailable()) {
+                    console.log(`[LLM-2] Failover başlatıldı. Sağlayıcı: ${otherProviderName}`);
+                    await fallbackInstance.chatStream({
+                        message,
+                        history,
+                        systemInstruction: activeInstruction,
+                        apiKey,
+                        res
+                    });
+                } else {
+                    throw new Error(`${otherProviderName} kullanılabilir değil.`);
+                }
+            } catch (fallbackErr) {
+                console.error("[LLM-ERR] Her iki sağlayıcı da başarısız oldu:", fallbackErr.message);
+                if (!res.headersSent) {
+                    res.status(500).json({ error: `Yapay zeka yanıtı üretilemedi. Hata: ${fallbackErr.message}` });
+                } else {
+                    res.end();
+                }
+            }
         }
-
-        // Cevabın parça parça (Stream) akması için bağlantı ayarlarını yapıyoruz
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-
-        // Gemini'den cevabı canlı akış olarak istiyoruz
-        const result = await model.generateContentStream({ contents });
-
-        // Gelen her bir kelime/harf parçasını anında mobil uygulamaya fırlatıyoruz
-        for await (const chunk of result.stream) {
-            const chunkText = chunk.text();
-            res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
-        }
-
-        // Akış bittiğinde bağlantıyı güvenlice kapatıyoruz
-        res.end();
-
     } catch (error) {
-        console.error("Akis esnasında hata olustu:", error);
+        console.error("Akis esnasında genel hata olustu:", error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: "Sistemsel bir hata meydana geldi." });
+        }
+    }
+});
+
+// Tek seferlik tam tamamlama rotası (non-stream)
+app.post('/api/chat/complete', async (req, res) => {
+    try {
+        const { message, systemInstruction, apiKey, provider } = req.body;
+
+        if (!message) {
+            return res.status(400).json({ error: "Mesaj bos olamaz." });
+        }
+
+        let selectedProviderName = provider || getDefaultProvider();
+        let providerInstance;
+
+        try {
+            providerInstance = getProvider(selectedProviderName);
+        } catch (e) {
+            selectedProviderName = getDefaultProvider();
+            providerInstance = getProvider(selectedProviderName);
+        }
+
+        console.log(`[LLM-1] chatComplete başlatıldı. Sağlayıcı: ${selectedProviderName}`);
+
+        try {
+            const text = await providerInstance.chatComplete({
+                message,
+                systemInstruction,
+                apiKey
+            });
+            res.json({ text });
+        } catch (err) {
+            console.warn(`[LLM-WARN] chatComplete ${selectedProviderName} başarısız oldu, failover deneniyor... Hata:`, err.message);
+
+            const otherProviderName = selectedProviderName === 'groq' ? 'gemini' : 'groq';
+            try {
+                const fallbackInstance = getProvider(otherProviderName);
+                if (fallbackInstance.isAvailable()) {
+                    console.log(`[LLM-2] chatComplete failover başlatıldı. Sağlayıcı: ${otherProviderName}`);
+                    const text = await fallbackInstance.chatComplete({
+                        message,
+                        systemInstruction,
+                        apiKey
+                    });
+                    res.json({ text });
+                } else {
+                    throw new Error(`${otherProviderName} kullanılabilir değil.`);
+                }
+            } catch (fallbackErr) {
+                console.error("[LLM-ERR] chatComplete her iki sağlayıcı da başarısız oldu:", fallbackErr.message);
+                res.status(500).json({ error: `Yapay zeka yanıtı üretilemedi. Hata: ${fallbackErr.message}` });
+            }
+        }
+    } catch (error) {
+        console.error("chatComplete esnasında genel hata olustu:", error);
         res.status(500).json({ error: "Sistemsel bir hata meydana geldi." });
     }
 });
@@ -226,7 +331,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Explicit API route catcher to prevent SPA fallback from overriding missing API calls
-app.use('/api/*', (req, res) => {
+app.use('/api', (req, res) => {
     res.status(404).json({ error: "API endpoint bulunamadı" });
 });
 
@@ -234,8 +339,11 @@ app.use('/api/*', (req, res) => {
 app.use(express.static(path.join(__dirname, 'dist')));
 
 // Fallback all frontend routes to Vite's index.html
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+app.use((req, res, next) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api')) {
+        return res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    }
+    next();
 });
 
 app.listen(PORT, () => {

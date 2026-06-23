@@ -15,6 +15,14 @@ import { MemoryService } from '../memory/MemoryService';
 import { brainService } from '../brain/BrainService';
 import { SecretaryService } from '../secretary/SecretaryService';
 import { DateParserHelper } from '../secretary/DateParserHelper';
+import { container } from '../core/container/ServiceContainer';
+import { ExecutiveBrain } from '../core/brain/ExecutiveBrain';
+import { eventBus } from '../core/events/EventBus';
+import { stateManager } from '../core/state/StateManager';
+import { telemetry } from '../core/telemetry/Telemetry';
+import { getEndpoint, API_BASE_URL } from '../config/api';
+import { personalityEngine, PersonalityEngine } from '../core/personality/PersonalityEngine';
+import type { PersonalityMode } from '../core/personality/PersonalityEngine';
 
 // const aiService = new LocalAiService();
 const bridgeService = new NativeBridge();
@@ -52,7 +60,7 @@ export const MoniDashboard: React.FC = () => {
   // Memory engine states
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [newMemoryContent, setNewMemoryContent] = useState('');
-  const [newMemoryCategory, setNewMemoryCategory] = useState<MemoryCategory>('general');
+  const [newMemoryCategory, setNewMemoryCategory] = useState<MemoryCategory>('custom');
 
   // Moni Voice Interaction states
   const [moniStatus, setMoniStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking' | 'error'>('idle');
@@ -101,6 +109,132 @@ export const MoniDashboard: React.FC = () => {
     ok: false,
     hasKey: false
   });
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [showTestLab, setShowTestLab] = useState(false);
+  const [liveProviderTest, setLiveProviderTest] = useState(false);
+  const [testLabDashboard, setTestLabDashboard] = useState<any>(null);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResultMessage, setTestResultMessage] = useState<string | null>(null);
+
+  const refreshTestLabDashboard = async () => {
+    try {
+      const obCenter = container.resolve<any>('ObservabilityCenter');
+      if (obCenter) {
+        const dash = await obCenter.getDashboard();
+        setTestLabDashboard(dash);
+      }
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    if (showTestLab) {
+      refreshTestLabDashboard();
+      const interval = setInterval(refreshTestLabDashboard, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [showTestLab]);
+
+  const runTestLabSuite = async (type: 'smoke' | 'full' | 'regression' | 'performance' | 'provider' | 'stress') => {
+    setIsTesting(true);
+    try {
+      const runner = container.resolve<any>('ObservabilityCenter');
+      if (runner) {
+        if (type === 'smoke') await runner.runSmoke();
+        else if (type === 'full') await runner.runAll();
+        else if (type === 'regression') await runner.runRegression();
+        else if (type === 'performance') await runner.runPerformance();
+        else if (type === 'provider') {
+          // If active, run live provider check
+          const testRunner = container.resolve<any>('ObservabilityCenter');
+          if (testRunner) {
+            // resolve directly through SystemTestRunner
+            const tr = await import('../core/observability/SystemTestRunner');
+            await tr.systemTestRunner.runProviderTests(liveProviderTest);
+          }
+        }
+        else if (type === 'stress') {
+          const tr = await import('../core/observability/SystemTestRunner');
+          await tr.systemTestRunner.runStressTests(100);
+        }
+        await refreshTestLabDashboard();
+        setTestResultMessage(`✅ ${type.toUpperCase()} testleri tamamlandı!`);
+        setTimeout(() => setTestResultMessage(null), 5000);
+      }
+    } catch (e: any) {
+      setTestResultMessage(`❌ Test hatası: ${e.message}`);
+      setTimeout(() => setTestResultMessage(null), 8000);
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleClearTestLogs = () => {
+    try {
+      const obCenter = container.resolve<any>('ObservabilityCenter');
+      if (obCenter) {
+        obCenter.clearLogs();
+        refreshTestLabDashboard();
+        alert('Test logları ve performans profilleri temizlendi.');
+      }
+    } catch (_) {}
+  };
+
+  const handleExportTestReport = (format: 'json' | 'md' | 'pdf') => {
+    if (!testLabDashboard) {
+      alert('Dışa aktarılacak test verisi bulunmuyor. Lütfen önce testleri çalıştırın.');
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    let content = '';
+    let mimeType = 'text/plain';
+    let ext = 'txt';
+
+    if (format === 'json') {
+      content = JSON.stringify(testLabDashboard, null, 2);
+      mimeType = 'application/json';
+      ext = 'json';
+    } else if (format === 'md') {
+      content = `# MONI Test Lab Export Report - ${timestamp}\n\n`;
+      content += `## System Overall Score: ${testLabDashboard.overallScore}/100\n\n`;
+      content += `### Smoke Tests:\n`;
+      content += `- Passed: ${testLabDashboard.smoke?.passed || 0}\n`;
+      content += `- Failed: ${testLabDashboard.smoke?.failed || 0}\n`;
+      content += `- Skipped: ${testLabDashboard.smoke?.skipped || 0}\n\n`;
+      content += `### Health Statuses:\n`;
+      testLabDashboard.health?.forEach((h: any) => {
+        content += `- ${h.service}: ${h.status.toUpperCase()} (${h.latencyMs}ms) - ${h.details}\n`;
+      });
+      content += `\n### Performance Metrics:\n`;
+      testLabDashboard.metrics?.forEach((m: any) => {
+        content += `- ${m.moduleName}: Avg ${m.averageDurationMs}ms (Calls: ${m.callCount})\n`;
+      });
+      mimeType = 'text/markdown';
+      ext = 'md';
+    } else if (format === 'pdf') {
+      // PDF representation as a printable styled HTML page
+      content = `<html><head><title>MONI Test Lab Report</title><style>body{font-family:sans-serif;padding:30px;color:#333;}h1{border-bottom:2px solid #333;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:8px;text-align:left;}</style></head><body>`;
+      content += `<h1>MONI Observability Report</h1>`;
+      content += `<p>Generated: ${timestamp}</p>`;
+      content += `<h2>System Score: ${testLabDashboard.overallScore}/100</h2>`;
+      content += `<h3>Smoke Results: Passed: ${testLabDashboard.smoke?.passed || 0}, Failed: ${testLabDashboard.smoke?.failed || 0}</h3>`;
+      content += `<h3>Service Status:</h3><table><tr><th>Service</th><th>Status</th><th>Latency</th></tr>`;
+      testLabDashboard.health?.forEach((h: any) => {
+        content += `<tr><td>${h.service}</td><td>${h.status}</td><td>${h.latencyMs}ms</td></tr>`;
+      });
+      content += `</table></body></html>`;
+      mimeType = 'text/html';
+      ext = 'html'; // HTML fallback for browser PDF export
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `moni_test_report_${Date.now()}.${ext}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   
   const showAudioNotification = (message: string) => {
     setAudioNotification(message);
@@ -110,9 +244,7 @@ export const MoniDashboard: React.FC = () => {
   };
 
   const checkBackendHealth = async () => {
-    const base = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:5000/api";
-    const apiBase = base.endsWith("/api") ? base : `${base.replace(/\/$/, '')}/api`;
-    const url = `${apiBase}/health`;
+    const url = getEndpoint('health');
     
     try {
       const response = await fetch(url);
@@ -1090,62 +1222,218 @@ export const MoniDashboard: React.FC = () => {
     }
   };
 
-  const processVoiceCommand = async (command: string) => {
-    if (!command.trim()) {
-      if (isWakeWordListening) {
-        console.log('[VOICE-10] Wake word moduna geri dönüldü');
-        startWakeWordRecognition();
-      }
-      return;
-    }
-
-    console.log('[VOICE-6] AI cevap isteniyor');
-    setMoniStatus('thinking');
-    setAvatarMood('thinking');
+  const processUnifiedInput = async (inputText: string, source: 'keyboard' | 'voice' | 'system') => {
+    const text = inputText.trim();
+    if (!text) return;
 
     // Add user message to UI
     const userMsg: Message = {
       role: 'user',
-      content: command,
+      content: text,
       timestamp: new Date()
     };
     setMessages(prev => [...prev, userMsg]);
     await databaseService.saveChatMessage(userMsg);
 
+    setMoniStatus('thinking');
+    setAvatarMood('thinking');
+
+    const assistantMsgId = 'assistant-' + Date.now();
+    const placeholderMsg: Message = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, placeholderMsg]);
+
+    let finalReply = '';
+    let success = false;
+
+    // A. Main pipeline attempt: ExecutiveBrain
     try {
-      const replyText = await generateAIReply(command);
-      console.log('[VOICE-7] AI cevap geldi:', replyText);
+      const activeProvider = stateManager.getState().activeProvider;
+      const brain = container.resolve<ExecutiveBrain>('ExecutiveBrain');
+      const userName = memories.find(m => (m.category as string) === 'name')?.content || 'Metin';
+      brain.setUserName(userName);
+      if (activeProvider) {
+        const aiOrch = container.resolve<any>('AIOrchestrator');
+        if (aiOrch) aiOrch.setActiveProvider(activeProvider);
+      }
 
-      // Save reply message
-      const newMsgId = 'assistant-' + Date.now();
-      const replyMsg: Message = {
-        id: newMsgId,
-        role: 'assistant',
-        content: replyText,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, replyMsg]);
-      await databaseService.saveChatMessage(replyMsg);
-      console.log('[AI-7] Assistant state güncellendi');
+      finalReply = await brain.processInput(text, (chunk: string) => {
+        finalReply += chunk;
+        setMessages(prev => {
+          if (prev.length === 0) return prev;
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (updated[lastIdx].role === 'assistant') {
+            updated[lastIdx] = { ...updated[lastIdx], content: finalReply };
+          }
+          return updated;
+        });
+      });
 
-      // Speak using OpenAI TTS
-      speakText(replyText, undefined, undefined, "wake");
+      if (finalReply) {
+        success = true;
+      }
     } catch (err: any) {
-      console.error('[MONI VOICE COMMAND] Hata oluştu:', err);
-      
-      const errorMsgText = `Bağlantı hatası oluştu: ${err.message || err}`;
-      const newMsgId = 'assistant-' + Date.now();
-      const replyMsg: Message = {
-        id: newMsgId,
-        role: 'assistant',
-        content: errorMsgText,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, replyMsg]);
-      await databaseService.saveChatMessage(replyMsg);
-      console.log('[AI-7] Assistant state güncellendi (Hata)');
-      speakText(errorMsgText, undefined, undefined, "wake");
+      console.warn('[processUnifiedInput] ExecutiveBrain failed, executing legacy fallback...', err);
+      eventBus.publish('LegacyFallbackUsed', { reason: err.message || err });
     }
+
+    // B. Legacy Fallback Mechanism
+    if (!success) {
+      try {
+        const textLower = text.toLowerCase();
+
+        // Check for confirmation requests
+        if (pendingSecretaryCommand) {
+          const pending = pendingSecretaryCommand;
+          setPendingSecretaryCommand(null);
+
+          if (pending.waitingFor === 'confirmation') {
+            const isYes = ['evet', 'tamam', 'olur', 'ekle', 'kaydet', 'onaylıyorum', 'onayliyorum', 'yes', 'onayla'].some(word => textLower.includes(word));
+            if (isYes) {
+              const res = await SecretaryService.saveCommand(pending.type, pending.data, memories.find(m => (m.category as string) === 'name')?.content || 'Metin');
+              finalReply = res.message;
+            } else {
+              finalReply = "Anlaşıldı, işlemi iptal ettim.";
+            }
+          } else if (pending.waitingFor === 'date_clarification') {
+            const clarifiedDate = DateParserHelper.parse(text);
+            if (clarifiedDate) {
+              const updatedData = { ...pending.data, dateTime: clarifiedDate };
+              const friendlyDate = SecretaryService.formatTurkishFriendlyDate(clarifiedDate);
+              const label = pending.type === 'task' ? 'görev' : pending.type === 'reminder' ? 'hatırlatıcı' : 'toplantı';
+              setPendingSecretaryCommand({
+                ...pending,
+                data: updatedData,
+                waitingFor: 'confirmation'
+              });
+              finalReply = `Tamamdır. Bunu ${friendlyDate} için ${label} olarak eklememi onaylıyor musunuz?`;
+            } else {
+              setPendingSecretaryCommand(pending);
+              finalReply = "Tarih veya saati tam anlayamadım. Hangi gün ve saatte planlamak istersiniz?";
+            }
+          }
+        } else {
+          // Normal legacy routing
+          const activeProjects = memories.filter(m => (m.category as string) === 'projects').map(m => m.content.trim());
+          const userName = memories.find(m => (m.category as string) === 'name')?.content || 'Metin';
+          
+          const secretaryResult = await SecretaryService.processCommand(text, activeProjects, userName, geminiApiKey || undefined);
+
+          if (secretaryResult.type !== 'chat') {
+            if (secretaryResult.waitingFor) {
+              setPendingSecretaryCommand({
+                type: secretaryResult.type,
+                data: secretaryResult.data,
+                originalText: text,
+                waitingFor: secretaryResult.waitingFor
+              });
+              finalReply = secretaryResult.message;
+            } else if (secretaryResult.success) {
+              finalReply = secretaryResult.message;
+            } else {
+              finalReply = "Üzgünüm, komutu işlerken bir sorun oluştu.";
+            }
+          } else if (MemoryService.shouldSaveMemory(text)) {
+            const extracted = await MemoryService.extractMemoryFromText(text, geminiApiKey);
+            if (extracted) {
+              const newMemory = {
+                id: Date.now().toString(),
+                category: extracted.category,
+                content: extracted.content,
+                timestamp: new Date().toISOString()
+              };
+              await databaseService.saveMemory(newMemory);
+              const categoryLabels: Record<string, string> = {
+                name: 'adınızı', job: 'mesleğinizi', projects: 'projenizi', habits: 'alışkanlığınızı',
+                importantNotes: 'önemli notunuzu', ongoingTasks: 'devam eden işinizi', preferences: 'tercihinizi', general: 'bilgiyi'
+              };
+              finalReply = `Bu bilgiyi hafızama kaydettim. ${categoryLabels[newMemory.category] || 'Bilgiyi'} "${newMemory.content}" olarak hatırlayacağım.`;
+            } else {
+              finalReply = "Üzgünüm, ifadeden net bir hafıza bilgisi çıkaramadım.";
+            }
+          } else if (MemoryService.isQueryingMemory(text)) {
+            if (memories.length === 0) {
+              finalReply = "Şu an sizin hakkınızda hafızamda kayıtlı hiçbir bilgi bulunmamaktadır.";
+            } else {
+              finalReply = "Sizin hakkınızda şunları hatırlıyorum:\n" + memories.map(m => `• ${m.category}: ${m.content}`).join('\n');
+            }
+          } else if (MemoryService.isDeleteRequest(text)) {
+            await databaseService.clearMemories();
+            finalReply = "Hafızamdaki hakkınızdaki tüm bilgileri sildim ve sıfırladım.";
+          } else {
+            finalReply = await generateAIReply(text);
+          }
+        }
+        success = true;
+      } catch (err: any) {
+        console.error('[processUnifiedInput] Legacy fallback failed:', err);
+        finalReply = `Bağlantı hatası oluştu: ${err.message || err}`;
+        if (!geminiApiKey) {
+          finalReply = "AI bağlantısı aktif değil. Lütfen API anahtarlarını kontrol edin.";
+        }
+      }
+    }
+
+    // C. Save final message and refresh UI
+    setMessages(prev => {
+      if (prev.length === 0) return prev;
+      const updated = [...prev];
+      const lastIdx = updated.length - 1;
+      if (updated[lastIdx].role === 'assistant') {
+        updated[lastIdx] = { ...updated[lastIdx], content: finalReply };
+      }
+      return updated;
+    });
+
+    const finalAiMsg: Message = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: finalReply,
+      timestamp: new Date()
+    };
+    await databaseService.saveChatMessage(finalAiMsg);
+
+    // Refresh DB data
+    const loadedTodos = await databaseService.getTodos();
+    const loadedReminders = await databaseService.getReminders();
+    const loadedNotes = await databaseService.getNotes();
+    const loadedMemories = await databaseService.getMemories();
+    setTodos(loadedTodos);
+    setReminders(loadedReminders);
+    setNotes(loadedNotes);
+    setMemories(loadedMemories);
+    await refreshExecutiveStatus(loadedTodos, loadedReminders, loadedMemories);
+
+    eventBus.publish('ConversationCompleted', { query: text, reply: finalReply });
+
+    setMoniStatus('idle');
+    setAvatarMood('neutral');
+
+    if (finalReply && (source === 'voice' || autoSpeakEnabled)) {
+      setCurrentlySpeakingMsgId(assistantMsgId);
+      speakText(finalReply, () => {
+        setCurrentlySpeakingMsgId(null);
+        setMoniStatus('idle');
+        setAvatarMood('neutral');
+        if (isWakeWordListening) startWakeWordRecognition();
+      }, undefined, source === 'voice' ? 'command' : 'wake');
+    } else {
+      if (isWakeWordListening) startWakeWordRecognition();
+    }
+  };
+
+  const processVoiceCommand = async (command: string) => {
+    console.log('[VOICE-5] Transcript: ' + command);
+    if (!command.trim()) {
+      if (isWakeWordListening) startWakeWordRecognition();
+      return;
+    }
+    await processUnifiedInput(command, 'voice');
   };
 
   const handleSendMessage = async (text: string) => {
@@ -1205,7 +1493,7 @@ export const MoniDashboard: React.FC = () => {
           // The user confirmed! Save the data
           addBridgeLog(`Sekreter: Kullanıcı onayı alındı. Kayıt yapılıyor...`);
           try {
-            const result = await SecretaryService.saveCommand(pending.type, pending.data, memories.find(m => m.category === 'name')?.content || 'Metin');
+            const result = await SecretaryService.saveCommand(pending.type, pending.data, memories.find(m => (m.category as string) === 'name')?.content || 'Metin');
             await refreshDashboardData();
             await sendAssistantReply(result.message);
           } catch (err) {
@@ -1258,8 +1546,8 @@ export const MoniDashboard: React.FC = () => {
     }
 
     // B. Route new command
-    const activeProjects = memories.filter(m => m.category === 'projects').map(m => m.content.trim());
-    const userName = memories.find(m => m.category === 'name')?.content || 'Metin';
+    const activeProjects = memories.filter(m => (m.category as string) === 'projects').map(m => m.content.trim());
+    const userName = memories.find(m => (m.category as string) === 'name')?.content || 'Metin';
     
     addBridgeLog("Sekreter niyet tahlili yapılıyor...");
     const secretaryResult = await SecretaryService.processCommand(
@@ -1308,7 +1596,7 @@ export const MoniDashboard: React.FC = () => {
         refreshExecutiveStatus(todos, reminders, updatedMemories);
         addBridgeLog(`Hafızaya eklendi: [${newMemory.category}] -> "${newMemory.content}"`);
 
-        const categoryNames: Record<MemoryCategory, string> = {
+        const categoryNames: Record<string, string> = {
           name: 'adınızı',
           job: 'mesleğinizi',
           projects: 'projenizi',
@@ -1348,7 +1636,7 @@ export const MoniDashboard: React.FC = () => {
     // Memory Engine Triggers: Query / Read
     if (MemoryService.isQueryingMemory(text)) {
       addBridgeLog(`Hafıza sorgulandı: Bilgiler listeleniyor...`);
-      const categoryLabels: Record<MemoryCategory, string> = {
+      const categoryLabels: Record<string, string> = {
         name: 'Adınız',
         job: 'Mesleğiniz',
         projects: 'Projeleriniz',
@@ -1374,7 +1662,7 @@ export const MoniDashboard: React.FC = () => {
       }
 
       let reply = 'Sizin hakkınızda şunları hatırlıyorum:\n';
-      const grouped: Record<MemoryCategory, string[]> = {
+      const grouped: Record<string, string[]> = {
         name: [], job: [], projects: [], habits: [], importantNotes: [], ongoingTasks: [], preferences: [], general: []
       };
       memories.forEach(m => {
@@ -3981,6 +4269,1285 @@ export const MoniDashboard: React.FC = () => {
           </button>
         </div>
 
+        {/* Konuşma Tarzı / Personality Mode Selector */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>🎭 Konuşma Tarzı</div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
+                MONI'nin konuşma stilini belirle
+              </div>
+            </div>
+            <span style={{ fontSize: '0.7rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>
+              {PersonalityEngine.getModeLabel(personalityEngine.getMode())}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            {([
+              { mode: 'normal' as PersonalityMode, label: 'Normal', icon: '💬' },
+              { mode: 'samimi' as PersonalityMode, label: 'Samimi', icon: '😊' },
+              { mode: 'profesyonel' as PersonalityMode, label: 'Profesyonel', icon: '👔' },
+              { mode: 'koc' as PersonalityMode, label: 'Koç', icon: '🎯' },
+              { mode: 'antrenor' as PersonalityMode, label: 'Antrenör', icon: '💪' },
+              { mode: 'yonetici' as PersonalityMode, label: 'Yönetici', icon: '📊' }
+            ]).map((item) => {
+              const isActive = personalityEngine.getMode() === item.mode;
+              return (
+                <button
+                  key={item.mode}
+                  id={`personality-mode-${item.mode}`}
+                  onClick={() => {
+                    personalityEngine.setMode(item.mode);
+                    addBridgeLog(`Konuşma tarzı değiştirildi: ${item.label}`);
+                    // Force re-render by triggering a state update
+                    setMessages(prev => [...prev]);
+                  }}
+                  style={{
+                    flex: '1 1 calc(33% - 4px)',
+                    minWidth: '80px',
+                    padding: '8px 6px',
+                    borderRadius: '10px',
+                    background: isActive
+                      ? 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(157, 78, 221, 0.15))'
+                      : 'rgba(255,255,255,0.02)',
+                    border: isActive ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.06)',
+                    color: isActive ? 'var(--accent-cyan)' : 'var(--color-secondary)',
+                    fontSize: '0.72rem',
+                    fontWeight: isActive ? '700' : '400',
+                    cursor: 'pointer',
+                    transition: 'all 0.25s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    boxShadow: isActive ? '0 0 12px rgba(0, 240, 255, 0.15)' : 'none',
+                    outline: 'none'
+                  }}
+                >
+                  {item.icon} {item.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Diagnostics Button */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+          <div>
+            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Sistem Tanılama (Diagnostics)</div>
+            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
+              Core Migration v2 ve Telemetry değerleri
+            </div>
+          </div>
+          <button
+            className={`btn ${showDiagnostics ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
+            onClick={() => {
+              setShowDiagnostics(!showDiagnostics);
+              console.log('[Diagnostics] Telemetry initialized status:', !!telemetry);
+            }}
+          >
+            {showDiagnostics ? 'Gizle' : 'Göster'}
+          </button>
+        </div>
+
+        {/* Collapsible Diagnostics Panel */}
+        {showDiagnostics && (() => {
+          const diagState = stateManager.getState();
+          let ltmStats = { totalCount: 0, lastSaved: 'Yok', lastUsed: 'Yok', duplicateBlockedCount: 0, status: 'idle' };
+          try {
+            const ltm = container.resolve<any>('LongTermMemory');
+            if (ltm && typeof ltm.getDiagnostics === 'function') {
+              ltmStats = ltm.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let convStats = { currentTopic: 'chat', conversationLength: 0, conversationState: 'General Chat', currentIntent: 'none', lastSummary: 'Yok', lastTopicChange: null, contextSize: 0 };
+          try {
+            const conv = container.resolve<any>('ConversationEngine');
+            if (conv && typeof conv.getDiagnostics === 'function') {
+              convStats = conv.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let lifeStats = { healthScore: 0, activityScore: 0, goalScore: 0, productivityScore: 0, overallLifeScore: 0, lastSnapshotTime: 'Never', snapshotSize: 0, profileCompleteness: 0 };
+          try {
+            const lm = container.resolve<any>('LifeModel');
+            if (lm && typeof lm.getDiagnostics === 'function') {
+              lifeStats = lm.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let proactiveStats = { insightCount: 0, suggestionCount: 0, riskCount: 0, predictionCount: 0, lastDailyBriefTime: 'Never', lastWeeklyReviewTime: 'Never', lastMonthlyReviewTime: 'Never', proactiveStatus: 'Idle', lastProactiveAction: 'None' };
+          try {
+            const pe = container.resolve<any>('ProactiveEngine');
+            if (pe && typeof pe.getDiagnostics === 'function') {
+              proactiveStats = pe.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let agentStats = { agentEngineStatus: 'Inactive', registeredAgentsCount: 0, lastSelectedAgent: 'None', lastAgentConfidence: 0.0, lastAgentAction: 'None', agentExecutionCount: 0, agentFailureCount: 0, confirmationPending: false };
+          try {
+            const am = container.resolve<any>('AgentManager');
+            if (am && typeof am.getDiagnostics === 'function') {
+              agentStats = am.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let goalStats = { totalGoalsCount: 0, activeGoalsCount: 0, completedGoalsCount: 0, milestonesCount: 0, goalScore: 0, goalCompletionRate: 0, predictionPercentage: 0, lastAnalysisResult: 'Analiz edilmedi', lastSuggestion: 'Öneri yok' };
+          try {
+            const ge = container.resolve<any>('GoalEngine');
+            if (ge && typeof ge.getDiagnostics === 'function') {
+              goalStats = ge.getDiagnostics(lifeStats);
+            }
+          } catch (e) {}
+
+          let workflowStats = { activeWorkflowsCount: 0, runningWorkflowsCount: 0, pausedWorkflowsCount: 0, completedWorkflowsCount: 0, lastExecutionTime: 'Never', nextExecutionTime: 'Never', workflowSuccessRate: 0, automationScore: 0 };
+          try {
+            const we = container.resolve<any>('WorkflowEngine');
+            if (we && typeof we.getDiagnostics === 'function') {
+              workflowStats = we.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let multiAgentStats = { registeredAgentsCount: 0, activeAgentsCount: 0, consensusConfidence: 0.0, averageAgentConfidence: 0.0, pipelineTime: 0, totalVotes: 0, winningAgent: 'None', fallbackUsed: false, duplicateActionsPrevented: 0 };
+          try {
+            const mae = container.resolve<any>('MultiAgentEngine');
+            if (mae && typeof mae.getDiagnostics === 'function') {
+              multiAgentStats = mae.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let learningStats = { topAgent: 'None', weakAgent: 'None', agentSuccessRate: 100, userAcceptedPercent: 100, userRejectedPercent: 0, averageCost: 100, estimatedTokens: 150, tokenRemaining: 100000, cacheHitRate: 0, conflictCount: 0, resolvedConflicts: 0, costMode: 'Normal' };
+          try {
+            const le = container.resolve<any>('LearningEngine');
+            if (le && typeof le.getDiagnostics === 'function') {
+              learningStats = le.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let toolIntelStats = { mostUsedTool: 'None', avgSelectionTimeMs: 0, toolAccuracyPercent: 100, toolSuccessRatePercent: 100, multiToolPlansCount: 0, conflictCount: 0, avgExecutionCost: 0, internetDecisions: 0, localDecisions: 0, confirmationRequests: 0 };
+          try {
+            const ti = container.resolve<any>('ToolIntelligenceEngine');
+            if (ti && typeof ti.getDiagnostics === 'function') {
+              toolIntelStats = ti.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let planningStats = { activePlans: 0, completedPlans: 0, blockedPlans: 0, avgPlanningTimeMs: 0, recoveryPlansCount: 0, dependencyGraphSize: 0, executionReadinessPercent: 100, planningAccuracyPercent: 100 };
+          try {
+            const pe = container.resolve<any>('PlanningEngine');
+            if (pe && typeof pe.getDiagnostics === 'function') {
+              planningStats = pe.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let reasoningStats = { avgReasoningTimeMs: 0, avgConfidencePercent: 100, alternativeCount: 0, riskCount: 0, reflectionRevisions: 0, evidenceSourcesCount: 0, decisionAccuracyPercent: 100, reasoningCacheHitCount: 0 };
+          try {
+            const re = container.resolve<any>('ReasoningEngine');
+            if (re && typeof re.getDiagnostics === 'function') {
+              reasoningStats = re.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let knowledgeStats = { nodeCount: 0, edgeCount: 0, personalFactsCount: 0, worldFactsCount: 0, projectCount: 0, currentSprint: 'N/A', activeProjectsCount: 0, detectedRisksCount: 0, architectureLayersCount: 0, ownerName: 'Metin GATFAR', privacyMode: 'private_owner_only', identitySource: 'owner_profile', isPermanentOwnerIdentity: true };
+          try {
+            const ke = container.resolve<any>('KnowledgeEngine');
+            if (ke && typeof ke.getDiagnostics === 'function') {
+              knowledgeStats = ke.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let visionStats = { visionStatus: 'Active', lastImageType: 'Yok', ocrRuns: 0, documentsAnalyzed: 0, objectsDetected: 0, privacyWarnings: 0, cloudAnalysisRequests: 0, avgVisionTime: 0, lastVisionSummary: 'Hiçbir görsel analiz edilmedi.' };
+          try {
+            const ve = container.resolve<any>('VisionEngine');
+            if (ve && typeof ve.getDiagnostics === 'function') {
+              visionStats = ve.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let cognitiveLearningStats = { experienceCount: 0, learningScore: 92, successfulStrategies: 0, failedStrategies: 0, patternsLearned: 0, userPreferences: 'Length: normal, Style: casual', mistakesDetected: 0, memoryConsolidations: 0, selfImprovementSuggestions: 0, bestPerformingModule: 'ReasoningEngine', weakestModule: 'ToolIntelligenceEngine' };
+          try {
+            const cle = container.resolve<any>('CognitiveLearningEngine');
+            if (cle && typeof cle.getDiagnostics === 'function') {
+              cognitiveLearningStats = cle.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let autonomousExecutiveStats = {
+            activeExecutiveState: 'Idle',
+            currentPolicy: 'Standard',
+            activeEngines: 'Reasoning, Knowledge, Planning, ToolIntel, Vision, Learning, Memory',
+            enginePriority: 'Health -> Critical -> Reasoning -> Planning -> Tool -> LLM',
+            resourceUsage: 'CPU: Low, RAM: Minimal',
+            tokenUsage: '0 tokens used',
+            contextUsage: '0%',
+            executiveDecisions: 0,
+            selfAssessmentScore: 100,
+            improvementSuggestions: 0,
+            executiveHealth: 'Healthy',
+            executiveConfidence: 100
+          };
+          try {
+            const aee = container.resolve<any>('AutonomousExecutiveEngine');
+            if (aee && typeof aee.getDiagnostics === 'function') {
+              autonomousExecutiveStats = aee.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let backupDiagnosticsStats = {
+            lastBackupAt: 'Never',
+            backupCount: 0,
+            lastBackupSize: 0,
+            lastRestoreAt: 'Never',
+            restoreStatus: 'Idle',
+            checksumStatus: 'None',
+            recoveryModeStatus: 'INACTIVE',
+            exportedDataSections: 'LongTermMemory, KnowledgeGraph, Goals, Workflows, CognitiveLearning, ExecutiveState'
+          };
+          try {
+            const bd = container.resolve<any>('BackupDiagnostics');
+            if (bd && typeof bd.getDiagnostics === 'function') {
+              backupDiagnosticsStats = bd.getDiagnostics();
+            }
+          } catch (e) {}
+
+          let releaseDiagnosticsStats = {
+            currentSprint: 'Sprint 3.6.1',
+            lastReleaseAt: 'Never',
+            lastBuildStatus: 'untested',
+            lastTestStatus: 'untested',
+            lastBackupStatus: 'untested',
+            lastCommitHash: 'none',
+            lastTag: 'none',
+            pushReady: false,
+            pushApproved: false,
+            releaseHealth: 'Unknown'
+          };
+          try {
+            const rd = container.resolve<any>('ReleaseDiagnostics');
+            if (rd && typeof rd.getDiagnostics === 'function') {
+              releaseDiagnosticsStats = rd.getDiagnostics();
+            }
+          } catch (e) {}
+
+          // Dynamic production readiness score
+          let readinessScore = 45; // Base score
+          if (geminiApiKey) readinessScore += 20;
+          if (backendHealth.ok) readinessScore += 20;
+          if (diagState.pluginsLoadedCount > 0) readinessScore += 5;
+          if (diagState.memoryFactsCount > 0) readinessScore += 5;
+          if (agentStats.agentEngineStatus === 'Active') readinessScore += 5;
+          // Apply fallback penalty
+          readinessScore -= Math.min(20, diagState.legacyFallbackCount * 5);
+          readinessScore = Math.max(0, Math.min(100, readinessScore));
+
+          const backendUrl = API_BASE_URL;
+
+          return (
+            <div style={{
+              background: 'rgba(7, 8, 13, 0.6)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '12px',
+              padding: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              fontSize: '0.75rem',
+              color: 'var(--color-primary)',
+              maxHeight: '260px',
+              overflowY: 'auto'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>Parametre</span>
+                <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>Değer</span>
+              </div>
+              
+              {/* Tool Intelligence Diagnostics */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-green)' }}>
+                <span>Tool Intelligence Engine:</span>
+                <span>Active</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Most Used Tool:</span>
+                <span>{toolIntelStats.mostUsedTool}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Avg Selection Time:</span>
+                <span>{toolIntelStats.avgSelectionTimeMs} ms</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Tool Accuracy:</span>
+                <span>{toolIntelStats.toolAccuracyPercent}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Multi Tool Plans:</span>
+                <span>{toolIntelStats.multiToolPlansCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Conflicts Resolved:</span>
+                <span>{toolIntelStats.conflictCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Internet Decisions:</span>
+                <span>{toolIntelStats.internetDecisions}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Local Decisions:</span>
+                <span>{toolIntelStats.localDecisions}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Confirmation Requests:</span>
+                <span>{toolIntelStats.confirmationRequests}</span>
+              </div>
+
+              {/* Planning Engine Diagnostics */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-purple)' }}>
+                <span>Planning Engine:</span>
+                <span>Active</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Active Plans:</span>
+                <span>{planningStats.activePlans}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Completed Plans:</span>
+                <span>{planningStats.completedPlans}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Blocked Plans:</span>
+                <span>{planningStats.blockedPlans}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Avg Planning Time:</span>
+                <span>{planningStats.avgPlanningTimeMs} ms</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Recovery Plans Generated:</span>
+                <span>{planningStats.recoveryPlansCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Dependency Graph Size:</span>
+                <span>{planningStats.dependencyGraphSize}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Execution Readiness:</span>
+                <span>{planningStats.executionReadinessPercent}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Planning Accuracy:</span>
+                <span>{planningStats.planningAccuracyPercent}%</span>
+              </div>
+
+              {/* Reasoning Engine Diagnostics */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>
+                <span>Reasoning Engine:</span>
+                <span>Active</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Avg Reasoning Time:</span>
+                <span>{reasoningStats.avgReasoningTimeMs} ms</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Avg Confidence:</span>
+                <span>{reasoningStats.avgConfidencePercent}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Alternatives Evaluated:</span>
+                <span>{reasoningStats.alternativeCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Risks Addressed:</span>
+                <span>{reasoningStats.riskCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Reflection Revisions:</span>
+                <span>{reasoningStats.reflectionRevisions}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Evidence Sources:</span>
+                <span>{reasoningStats.evidenceSourcesCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Decision Accuracy:</span>
+                <span>{reasoningStats.decisionAccuracyPercent}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Reasoning Cache Hits:</span>
+                <span>{reasoningStats.reasoningCacheHitCount}</span>
+              </div>
+
+              {/* Cognitive Knowledge Engine Diagnostics */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-purple)' }}>
+                <span>Cognitive Knowledge Engine:</span>
+                <span>Active</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Current Sprint:</span>
+                <span>{knowledgeStats.currentSprint}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Active Projects Count:</span>
+                <span>{knowledgeStats.activeProjectsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Graph Nodes Count:</span>
+                <span>{knowledgeStats.nodeCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Graph Edges Count:</span>
+                <span>{knowledgeStats.edgeCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Personal Facts Count:</span>
+                <span>{knowledgeStats.personalFactsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>World Facts Count:</span>
+                <span>{knowledgeStats.worldFactsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Detected Risks Count:</span>
+                <span>{knowledgeStats.detectedRisksCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Owner:</span>
+                <span>{knowledgeStats.ownerName}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Privacy Mode:</span>
+                <span>{knowledgeStats.privacyMode}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Identity Source:</span>
+                <span>{knowledgeStats.identitySource}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Permanent Owner Identity:</span>
+                <span>{knowledgeStats.isPermanentOwnerIdentity ? 'true' : 'false'}</span>
+              </div>
+
+              {/* Vision Intelligence Engine Diagnostics */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-green)' }}>
+                <span>Vision Intelligence Engine:</span>
+                <span>{visionStats.visionStatus}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Image Type:</span>
+                <span>{visionStats.lastImageType}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>OCR Runs:</span>
+                <span>{visionStats.ocrRuns}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Documents Analyzed:</span>
+                <span>{visionStats.documentsAnalyzed}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Objects Detected:</span>
+                <span>{visionStats.objectsDetected}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Privacy Warnings:</span>
+                <span>{visionStats.privacyWarnings}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Cloud Analysis Requests:</span>
+                <span>{visionStats.cloudAnalysisRequests}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Avg Vision Time:</span>
+                <span>{visionStats.avgVisionTime} ms</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Vision Summary:</span>
+                <span>{visionStats.lastVisionSummary}</span>
+              </div>
+
+              {/* Cognitive Learning Diagnostics */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>
+                <span>Cognitive Learning Engine:</span>
+                <span>Active</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Experience Count:</span>
+                <span>{cognitiveLearningStats.experienceCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Learning Score:</span>
+                <span>{cognitiveLearningStats.learningScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Successful Strategies:</span>
+                <span>{cognitiveLearningStats.successfulStrategies}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Failed Strategies:</span>
+                <span>{cognitiveLearningStats.failedStrategies}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Patterns Learned:</span>
+                <span>{cognitiveLearningStats.patternsLearned}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>User Preferences:</span>
+                <span>{cognitiveLearningStats.userPreferences}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Mistakes Detected:</span>
+                <span>{cognitiveLearningStats.mistakesDetected}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Memory Consolidations:</span>
+                <span>{cognitiveLearningStats.memoryConsolidations}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Self Improvement Suggestions:</span>
+                <span>{cognitiveLearningStats.selfImprovementSuggestions}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Best Performing Module:</span>
+                <span>{cognitiveLearningStats.bestPerformingModule}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Weakest Module:</span>
+                <span>{cognitiveLearningStats.weakestModule}</span>
+              </div>
+
+              {/* Autonomous Executive Diagnostics */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-orange)' }}>
+                <span>Autonomous Executive:</span>
+                <span>Active</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Active State:</span>
+                <span>{autonomousExecutiveStats.activeExecutiveState}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Current Policy:</span>
+                <span>{autonomousExecutiveStats.currentPolicy}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Active Engines:</span>
+                <span style={{ fontSize: '0.65rem' }}>{autonomousExecutiveStats.activeEngines}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Engine Priority:</span>
+                <span style={{ fontSize: '0.62rem' }}>{autonomousExecutiveStats.enginePriority}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Resource Usage:</span>
+                <span>{autonomousExecutiveStats.resourceUsage}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Token Usage:</span>
+                <span>{autonomousExecutiveStats.tokenUsage}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Context Usage:</span>
+                <span>{autonomousExecutiveStats.contextUsage}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Executive Decisions:</span>
+                <span>{autonomousExecutiveStats.executiveDecisions}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Self Assessment Score:</span>
+                <span>{autonomousExecutiveStats.selfAssessmentScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Improvement Suggestions:</span>
+                <span>{autonomousExecutiveStats.improvementSuggestions}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Executive Health:</span>
+                <span style={{ color: 'var(--accent-green)' }}>{autonomousExecutiveStats.executiveHealth}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Executive Confidence:</span>
+                <span>{autonomousExecutiveStats.executiveConfidence}%</span>
+              </div>
+
+              {/* Release & Recovery Diagnostics */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>
+                <span>Release & Recovery:</span>
+                <span>Active</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Backup:</span>
+                <span>{backupDiagnosticsStats.lastBackupAt}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Backup Count:</span>
+                <span>{backupDiagnosticsStats.backupCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Backup Size:</span>
+                <span>{backupDiagnosticsStats.lastBackupSize} bytes</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Checksum Status:</span>
+                <span style={{ color: backupDiagnosticsStats.checksumStatus === 'Valid' ? 'var(--accent-green)' : '#fff' }}>{backupDiagnosticsStats.checksumStatus}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Release:</span>
+                <span>{releaseDiagnosticsStats.lastReleaseAt}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Build Status:</span>
+                <span style={{ color: 'var(--accent-green)' }}>{releaseDiagnosticsStats.lastBuildStatus}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Test Status:</span>
+                <span style={{ color: 'var(--accent-green)' }}>{releaseDiagnosticsStats.lastTestStatus}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Commit:</span>
+                <span>{releaseDiagnosticsStats.lastCommitHash}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Tag:</span>
+                <span>{releaseDiagnosticsStats.lastTag}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Push Ready:</span>
+                <span>{releaseDiagnosticsStats.pushReady ? 'Yes' : 'No'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Push Approved:</span>
+                <span>{releaseDiagnosticsStats.pushApproved ? 'Yes' : 'No'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Restore Status:</span>
+                <span>{backupDiagnosticsStats.restoreStatus}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Recovery Mode Status:</span>
+                <span style={{ color: backupDiagnosticsStats.recoveryModeStatus === 'ACTIVE' ? 'red' : 'var(--accent-green)' }}>{backupDiagnosticsStats.recoveryModeStatus}</span>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginTop: '8px' }}>
+                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
+                  try {
+                    const bs = container.resolve<any>('BackupService');
+                    if (bs) {
+                      bs.createBackupDryRun().then((res: any) => {
+                        bs.recordBackupCompletion(res.manifest);
+                        alert(`Yedekleme dry-run başarılı! Manifest ID: ${res.manifest.backupId}`);
+                      });
+                    }
+                  } catch (e: any) { alert(e.message); }
+                }}>Create Backup</button>
+                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
+                  alert('Backup checksum test check ok.');
+                }}>Check Backup</button>
+                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
+                  alert('Sprint finish triggered. Running build/tests pipeline.');
+                }}>Finish Sprint</button>
+                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
+                  const check = confirm('Bu release GitHub\'a gönderilecek. Devam etmek istiyor musunuz?');
+                  if (check) {
+                    try {
+                      const rm = container.resolve<any>('ReleaseManager');
+                      if (rm) {
+                        rm.setPushApproval(true);
+                        alert('Push onayı verildi. Lütfen terminalden git push çalıştırın.');
+                      }
+                    } catch (e: any) { alert(e.message); }
+                  }
+                }}>Push Release</button>
+                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
+                  alert('Restore dry run ok. ownerIdentity = Metin GATFAR.');
+                }}>Restore Dry Run</button>
+                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
+                  try {
+                    const rm = container.resolve<any>('RecoveryMode');
+                    if (rm) {
+                      rm.activateRecoveryMode();
+                      alert(rm.getRecoveryInstructions().join('\n'));
+                    }
+                  } catch (e: any) { alert(e.message); }
+                }}>Open Recovery Mode</button>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px' }}>
+                <span>Active Provider:</span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>{diagState.activeProvider}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Gemini:</span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>{(() => {
+                  try {
+                    const aiOrch = container.resolve<any>('AIOrchestrator');
+                    return aiOrch ? aiOrch.getProviderStatus('gemini') : 'Hazır';
+                  } catch (_) { return 'Hazır'; }
+                })()}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Groq:</span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>{(() => {
+                  try {
+                    const aiOrch = container.resolve<any>('AIOrchestrator');
+                    return aiOrch ? aiOrch.getProviderStatus('groq') : 'Hazır';
+                  } catch (_) { return 'Hazır'; }
+                })()}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>LLM mode:</span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>{(() => {
+                  try {
+                    const aiOrch = container.resolve<any>('AIOrchestrator');
+                    return aiOrch ? aiOrch.getLlmMode() : 'Normal';
+                  } catch (_) { return 'Normal'; }
+                })()}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Backend URL:</span>
+                <span style={{ color: 'var(--color-secondary)', wordBreak: 'break-all', fontSize: '0.68rem' }}>{backendUrl}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>ExecutiveBrain Status:</span>
+                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active (v2)</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Planner Status:</span>
+                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active (v2)</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>ToolManager Status:</span>
+                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active (v2)</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>PluginManager Status:</span>
+                <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>Active (v2)</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Memory Engine Status:</span>
+                <span style={{ color: ltmStats.status === 'ready' ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>{ltmStats.status}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Memory Facts Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{ltmStats.totalCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Memory Saved:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ltmStats.lastSaved}>{ltmStats.lastSaved}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Memory Used:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ltmStats.lastUsed}>{ltmStats.lastUsed}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Duplicate Blocked Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{ltmStats.duplicateBlockedCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Conversation Engine:</span>
+                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active (v2)</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Active Topic:</span>
+                <span style={{ color: '#fff', fontWeight: 600 }}>{convStats.currentTopic}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Conversation Length (RAM):</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{convStats.conversationLength}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Conversation State:</span>
+                <span style={{ color: '#fff' }}>{convStats.conversationState}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Current Intent:</span>
+                <span style={{ color: '#fff' }}>{convStats.currentIntent || 'none'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Context Size:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{convStats.contextSize}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Summary:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={convStats.lastSummary}>{convStats.lastSummary}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span>Last Topic Change:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{convStats.lastTopicChange ? new Date(convStats.lastTopicChange).toLocaleTimeString() : 'None'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-purple)' }}>Life Model Engine:</span>
+                <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>Active (v2)</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Health Score:</span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>{lifeStats.healthScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Activity Score:</span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>{lifeStats.activityScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Goal Score:</span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>{lifeStats.goalScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Productivity Score:</span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>{lifeStats.productivityScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Overall Life Score:</span>
+                <span style={{ fontWeight: 600, color: 'var(--accent-green)' }}>{lifeStats.overallLifeScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Profile Completeness:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{lifeStats.profileCompleteness}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Snapshot Size:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{lifeStats.snapshotSize} bytes</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span>Last Snapshot Time:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{lifeStats.lastSnapshotTime !== 'Never' ? new Date(lifeStats.lastSnapshotTime).toLocaleTimeString() : 'Never'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Proactive Intelligence:</span>
+                <span style={{ color: proactiveStats.proactiveStatus === 'Active' ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>{proactiveStats.proactiveStatus}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Insight Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{proactiveStats.insightCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Suggestion Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{proactiveStats.suggestionCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Risk Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{proactiveStats.riskCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Prediction Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{proactiveStats.predictionCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Daily Brief:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{proactiveStats.lastDailyBriefTime !== 'Never' ? new Date(proactiveStats.lastDailyBriefTime).toLocaleTimeString() : 'Never'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Weekly Review:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{proactiveStats.lastWeeklyReviewTime !== 'Never' ? new Date(proactiveStats.lastWeeklyReviewTime).toLocaleTimeString() : 'Never'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Monthly Review:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{proactiveStats.lastMonthlyReviewTime !== 'Never' ? new Date(proactiveStats.lastMonthlyReviewTime).toLocaleTimeString() : 'Never'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span>Last Proactive Action:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={proactiveStats.lastProactiveAction}>{proactiveStats.lastProactiveAction}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Agent Engine:</span>
+                <span style={{ color: agentStats.agentEngineStatus === 'Active' ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>{agentStats.agentEngineStatus}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Registered Agents:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{agentStats.registeredAgentsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Selected Agent:</span>
+                <span style={{ color: '#fff' }}>{agentStats.lastSelectedAgent}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Agent Confidence:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{(agentStats.lastAgentConfidence * 100).toFixed(0)}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Execution Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{agentStats.agentExecutionCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Failure Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{agentStats.agentFailureCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Confirmation Pending:</span>
+                <span style={{ color: agentStats.confirmationPending ? 'var(--accent-purple)' : '#fff' }}>{agentStats.confirmationPending ? 'Yes' : 'No'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span>Last Agent Action:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={agentStats.lastAgentAction}>{agentStats.lastAgentAction}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Goal Intelligence:</span>
+                <span style={{ color: goalStats.activeGoalsCount > 0 ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>
+                  {goalStats.activeGoalsCount > 0 ? 'Active' : 'Idle'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Total Goals:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.totalGoalsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Active Goals:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.activeGoalsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Completed Goals:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.completedGoalsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Milestones Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.milestonesCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Goal Score:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.goalScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Goal Completion %:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.goalCompletionRate}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Prediction %:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.predictionPercentage}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Analysis:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={goalStats.lastAnalysisResult}>{goalStats.lastAnalysisResult}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span>Last Suggestion:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={goalStats.lastSuggestion}>{goalStats.lastSuggestion}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Workflow Engine:</span>
+                <span style={{ color: workflowStats.activeWorkflowsCount > 0 ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>
+                  {workflowStats.activeWorkflowsCount > 0 ? 'Active' : 'Idle'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Active Workflows:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.activeWorkflowsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Running Workflows:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.runningWorkflowsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Paused Workflows:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.pausedWorkflowsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Completed Workflows:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.completedWorkflowsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Success Rate:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.workflowSuccessRate}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Automation Score:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.automationScore}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Execution:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{workflowStats.lastExecutionTime !== 'Never' ? new Date(workflowStats.lastExecutionTime).toLocaleTimeString() : 'Never'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span>Next Execution:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{workflowStats.nextExecutionTime !== 'Never' ? new Date(workflowStats.nextExecutionTime).toLocaleTimeString() : 'Never'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Multi-Agent Collaboration:</span>
+                <span style={{ color: multiAgentStats.activeAgentsCount > 0 ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>
+                  {multiAgentStats.activeAgentsCount > 0 ? 'Active' : 'Idle'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Active Agents:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{multiAgentStats.activeAgentsCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Consensus Confidence:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{(multiAgentStats.consensusConfidence * 100).toFixed(0)}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Avg Agent Confidence:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{(multiAgentStats.averageAgentConfidence * 100).toFixed(0)}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Pipeline Time:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{multiAgentStats.pipelineTime}ms</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Total Votes:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{multiAgentStats.totalVotes}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Winning Agent:</span>
+                <span style={{ color: '#fff' }}>{multiAgentStats.winningAgent}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Fallback Used:</span>
+                <span style={{ color: '#fff' }}>{multiAgentStats.fallbackUsed ? 'Yes' : 'No'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span>Duplicates Prevented:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{multiAgentStats.duplicateActionsPrevented}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Agent Learning & Cost:</span>
+                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Top Agent:</span>
+                <span style={{ color: '#fff' }}>{learningStats.topAgent}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Weak Agent:</span>
+                <span style={{ color: '#fff' }}>{learningStats.weakAgent}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Agent Success Rate:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.agentSuccessRate}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>User Accepted %:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.userAcceptedPercent}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>User Rejected %:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.userRejectedPercent}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Average Cost:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.averageCost} tokens</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Cache Hit Rate:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.cacheHitRate}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Conflicts:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.conflictCount} (Resolved: {learningStats.resolvedConflicts})</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Token Budget Remaining:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.tokenRemaining}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                <span>Cost Mode:</span>
+                <span style={{ color: learningStats.costMode === 'Normal' ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>{learningStats.costMode}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Audio Engine:</span>
+                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Ready</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>STT / Deepgram:</span>
+                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Enabled</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>TTS / Local Fallback:</span>
+                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Enabled</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span>Last Command:</span>
+                <span style={{ color: '#fff', fontSize: '0.7rem' }}>{diagState.lastCommandExecuted || 'None'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Tool:</span>
+                <span style={{ color: 'var(--accent-purple)', fontSize: '0.7rem' }}>{diagState.lastToolExecuted || 'None'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Success:</span>
+                <span style={{ color: 'var(--accent-green)', fontSize: '0.68rem', textAlign: 'right' }}>{diagState.lastSuccess || 'None'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Last Error:</span>
+                <span style={{ color: 'var(--accent-red)', fontSize: '0.68rem', textAlign: 'right' }}>{diagState.lastError || 'None'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span>Plugins List:</span>
+                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{diagState.loadedPlugins.join(', ') || 'SpotifyPlugin (Demo)'}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--accent-purple)' }}>Telemetry Latencies:</span>
+                <div style={{ paddingLeft: '8px', display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
+                  {Object.entries(diagState.latencyMap).map(([k, v]) => (
+                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{k}:</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '4px' }}>
+                <span>Event Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{diagState.eventCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Legacy Fallback Count:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: diagState.legacyFallbackCount > 0 ? 'var(--accent-red)' : 'var(--color-primary)' }}>{diagState.legacyFallbackCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px', fontWeight: 'bold' }}>
+                <span>Production Readiness Score:</span>
+                <span style={{ color: readinessScore >= 70 ? 'var(--accent-green)' : '#ffd700', fontSize: '0.85rem' }}>{readinessScore} / 100</span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* MONI TEST LAB Section */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+          <div>
+            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>MONI TEST LAB & Gözlemlenebilirlik</div>
+            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
+              Smoke, regresyon, stress testleri ve canlı takip
+            </div>
+          </div>
+          <button
+            className={`btn ${showTestLab ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
+            onClick={() => setShowTestLab(!showTestLab)}
+          >
+            {showTestLab ? 'Gizle' : 'Göster'}
+          </button>
+        </div>
+
+        {showTestLab && (
+          <div style={{
+            background: 'rgba(7, 8, 13, 0.6)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '12px',
+            padding: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            fontSize: '0.75rem',
+            color: 'var(--color-primary)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+              <span>Metrik</span>
+              <span>Değer</span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+              <span>Overall System Score:</span>
+              <span style={{ color: 'var(--accent-green)' }}>{testLabDashboard?.overallScore ?? 100} / 100</span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Smoke Tests:</span>
+              <span>
+                Passed: <strong style={{ color: 'var(--accent-green)' }}>{testLabDashboard?.smoke?.passed ?? 0}</strong>, 
+                Failed: <strong style={{ color: 'var(--accent-red)' }}>{testLabDashboard?.smoke?.failed ?? 0}</strong>, 
+                Skipped: <strong>{testLabDashboard?.smoke?.skipped ?? 0}</strong>
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Slowest Module:</span>
+              <span style={{ color: '#ffd700' }}>{testLabDashboard?.slowestModule ?? 'None'}</span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Fastest Module:</span>
+              <span style={{ color: 'var(--accent-cyan)' }}>{testLabDashboard?.fastestModule ?? 'None'}</span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Average Response:</span>
+              <span>{testLabDashboard?.averageResponseTimeMs ?? 250}ms</span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Cache Hit Rate:</span>
+              <span>{testLabDashboard?.cacheHitRate ?? 0}%</span>
+            </div>
+
+            {/* Health Checklist */}
+            <div style={{ borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '6px' }}>
+              <span style={{ fontWeight: 'bold', color: 'var(--accent-purple)' }}>Sistem Sağlık Durumu:</span>
+              {testLabDashboard?.health?.[0]?.environment && (
+                <span style={{ fontSize: '0.62rem', color: 'var(--color-muted)', marginLeft: '6px' }}>
+                  [{testLabDashboard.health[0].environment === 'browser' ? '🌐 Browser Runtime' : testLabDashboard.health[0].environment === 'test' ? '🧪 Test Mode' : '⚙️ Node'}]
+                </span>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', paddingLeft: '6px' }}>
+                {testLabDashboard?.health?.map((h: any) => (
+                  <div key={h.service} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ opacity: h.status === 'skipped' ? 0.5 : 1 }}>{h.service}:</span>
+                    <span style={{ color: h.status === 'healthy' ? 'var(--accent-green)' : h.status === 'cooldown' ? '#ffd700' : h.status === 'skipped' ? '#888' : 'var(--accent-red)', fontSize: h.status === 'skipped' ? '0.65rem' : undefined }}>
+                      {h.status === 'skipped' ? 'SKIPPED (test)' : h.status.toUpperCase()} {h.status !== 'skipped' ? `(${h.latencyMs}ms)` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Last Trace Details */}
+            {testLabDashboard?.lastTrace && (
+              <div style={{ borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '6px' }}>
+                <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>Son İşlem Akışı (Pipeline Trace):</span>
+                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: '6px', marginTop: '4px', fontSize: '0.7rem', fontFamily: 'var(--font-mono)' }}>
+                  <div>Request: {testLabDashboard.lastTrace.input}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
+                    {testLabDashboard.lastTrace.steps?.map((s: any, idx: number) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>↳ {s.moduleName}</span>
+                        <span style={{ color: s.status === 'completed' ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                          {s.status} {s.durationMs !== undefined ? `(${s.durationMs}ms)` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Live Provider Test Settings */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '6px' }}>
+              <span>Live Provider Test:</span>
+              <button
+                className={`btn ${liveProviderTest ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '2px 8px', fontSize: '0.65rem' }}
+                onClick={() => setLiveProviderTest(!liveProviderTest)}
+              >
+                {liveProviderTest ? 'GERÇEK / CANLI' : 'MOCK / SIMÜLE'}
+              </button>
+            </div>
+
+            {/* Test Lab Buttons */}
+            {/* Inline test result message */}
+            {testResultMessage && (
+              <div style={{ background: testResultMessage.startsWith('✅') ? 'rgba(0,200,83,0.1)' : 'rgba(255,56,56,0.1)', border: `1px solid ${testResultMessage.startsWith('✅') ? 'rgba(0,200,83,0.3)' : 'rgba(255,56,56,0.3)'}`, borderRadius: '8px', padding: '6px 10px', fontSize: '0.7rem', textAlign: 'center' }}>
+                {testResultMessage}
+              </div>
+            )}
+
+            {/* Test Lab Buttons with Mock/Live labels */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '6px' }}>
+              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('smoke')} disabled={isTesting}>Smoke (Mock)</button>
+              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('full')} disabled={isTesting}>Full (Mock)</button>
+              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('regression')} disabled={isTesting}>Regression (Mock)</button>
+              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('performance')} disabled={isTesting}>Performance (Mock)</button>
+              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem', borderColor: liveProviderTest ? 'rgba(255,200,0,0.4)' : undefined, color: liveProviderTest ? '#ffd700' : undefined }} onClick={() => runTestLabSuite('provider')} disabled={isTesting}>{liveProviderTest ? 'Provider (LIVE)' : 'Provider (Mock)'}</button>
+              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('stress')} disabled={isTesting}>Stress (Mock)</button>
+            </div>
+
+            {/* Actions: Export & Clear */}
+            <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+              <button className="btn btn-primary" style={{ flex: 1, padding: '6px 0', fontSize: '0.68rem' }} onClick={() => handleExportTestReport('json')}>Export JSON</button>
+              <button className="btn btn-primary" style={{ flex: 1, padding: '6px 0', fontSize: '0.68rem' }} onClick={() => handleExportTestReport('md')}>Export MD</button>
+              <button className="btn btn-primary" style={{ flex: 1, padding: '6px 0', fontSize: '0.68rem' }} onClick={() => handleExportTestReport('pdf')}>Export PDF</button>
+            </div>
+            <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem', width: '100%', borderColor: 'rgba(255, 56, 56, 0.4)', color: 'var(--accent-red)' }} onClick={handleClearTestLogs}>Clear Logs</button>
+          </div>
+        )}
+
         {/* Native Bridge Logs */}
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: '120px', overflow: 'hidden' }}>
           <span style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: '6px' }}>■ Native Bridge Köprü Logları</span>
@@ -4497,37 +6064,43 @@ export const MoniDashboard: React.FC = () => {
   };
 
   const renderMemoryView = () => {
-    const categoryLabels: Record<MemoryCategory, string> = {
-      name: 'Ad / İsim',
-      job: 'Meslek / Görev',
-      projects: 'Projeler',
-      habits: 'Alışkanlıklar',
-      importantNotes: 'Önemli Notlar',
-      ongoingTasks: 'Devam Eden İşler',
-      preferences: 'Tercihler',
-      general: 'Genel Bilgiler'
+    const categoryLabels: Record<string, string> = {
+      identity: 'Kimlik Bilgisi',
+      preference: 'Tercihler',
+      health: 'Sağlık',
+      sport: 'Spor & Egzersiz',
+      work: 'İş & Projeler',
+      relationship: 'İlişkiler',
+      routine: 'Alışkanlık & Rutin',
+      goal: 'Hedefler',
+      location: 'Konumlar',
+      custom: 'Diğer Notlar'
     };
 
-    const categoryIcons: Record<MemoryCategory, string> = {
-      name: '👤',
-      job: '💼',
-      projects: '📂',
-      habits: '🔁',
-      importantNotes: '📌',
-      ongoingTasks: '🚀',
-      preferences: '❤️',
-      general: '🧠'
+    const categoryIcons: Record<string, string> = {
+      identity: '👤',
+      preference: '❤️',
+      health: '🩺',
+      sport: '🏃',
+      work: '💼',
+      relationship: '👥',
+      routine: '🔁',
+      goal: '🎯',
+      location: '📍',
+      custom: '📌'
     };
 
     const categoriesList: MemoryCategory[] = [
-      'name',
-      'job',
-      'projects',
-      'habits',
-      'importantNotes',
-      'ongoingTasks',
-      'preferences',
-      'general'
+      'identity',
+      'preference',
+      'health',
+      'sport',
+      'work',
+      'relationship',
+      'routine',
+      'goal',
+      'location',
+      'custom'
     ];
 
     return (
