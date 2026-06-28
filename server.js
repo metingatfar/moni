@@ -3,6 +3,17 @@ import express from 'express';
 import cors from 'cors';
 import { getProvider, getAvailableProviders, getDefaultProvider } from './providers/index.js';
 
+function trimHistoryAndPayload(history, message) {
+    if (!history || !Array.isArray(history)) return history;
+    const historyText = history.map(m => m.content || '').join(' ');
+    const totalLength = message.length + historyText.length;
+    if (totalLength > 6000) {
+        console.log(`[TOKEN-TRIM] Payload too large (${totalLength} chars). Trimming history.`);
+        return history.slice(-5);
+    }
+    return history;
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -99,40 +110,68 @@ app.post('/api/chat/stream', async (req, res) => {
 
         console.log(`[LLM-1] İstek başlatıldı. Sağlayıcı: ${selectedProviderName}`);
 
-        try {
-            await providerInstance.chatStream({
-                message,
-                history,
-                systemInstruction: activeInstruction,
-                apiKey,
-                res
-            });
-        } catch (err) {
-            console.warn(`[LLM-WARN] ${selectedProviderName} başarısız oldu, failover deneniyor... Hata:`, err.message);
+        const activeHistory = trimHistoryAndPayload(history, message);
+        let success = false;
+        let lastError = null;
 
-            const otherProviderName = selectedProviderName === 'groq' ? 'gemini' : 'groq';
+        const providersToTry = [selectedProviderName];
+        if (!providersToTry.includes('gemini')) providersToTry.push('gemini');
+        if (!providersToTry.includes('groq')) providersToTry.push('groq');
+
+        for (const provName of providersToTry) {
             try {
-                const fallbackInstance = getProvider(otherProviderName);
-                if (fallbackInstance.isAvailable()) {
-                    console.log(`[LLM-2] Failover başlatıldı. Sağlayıcı: ${otherProviderName}`);
-                    await fallbackInstance.chatStream({
-                        message,
-                        history,
-                        systemInstruction: activeInstruction,
-                        apiKey,
-                        res
-                    });
-                } else {
-                    throw new Error(`${otherProviderName} kullanılabilir değil.`);
+                const instance = getProvider(provName);
+                if (!instance.isAvailable()) continue;
+
+                // Write rate limit indicator if preceding provider failed with 429
+                if (lastError && (lastError.message.includes('429') || lastError.message.toLowerCase().includes('rate_limit') || lastError.message.toLowerCase().includes('quota'))) {
+                    if (!res.headersSent) {
+                        res.setHeader('Content-Type', 'text/event-stream');
+                        res.setHeader('Cache-Control', 'no-cache');
+                        res.setHeader('Connection', 'keep-alive');
+                    }
+                    const warningMsg = (activeInstruction.includes('en-US') || activeInstruction.toLowerCase().includes('english')) ?
+                        "Groq rate limit reached. Switching to an alternative AI provider.\n\n" :
+                        "Groq kullanım limiti doldu. Alternatif yapay zeka sağlayıcısına geçiyorum.\n\n";
+                    res.write(`data: ${JSON.stringify({ text: warningMsg, providerStatus: 'Fallback Provider', isRateLimited: true })}\n\n`);
                 }
-            } catch (fallbackErr) {
-                console.error("[LLM-ERR] Her iki sağlayıcı da başarısız oldu:", fallbackErr.message);
-                if (!res.headersSent) {
-                    res.status(500).json({ error: `Yapay zeka yanıtı üretilemedi. Hata: ${fallbackErr.message}` });
-                } else {
-                    res.end();
-                }
+
+                await instance.chatStream({
+                    message,
+                    history: activeHistory,
+                    systemInstruction: activeInstruction,
+                    apiKey,
+                    res
+                });
+                success = true;
+                break;
+            } catch (err) {
+                console.warn(`[PROVIDER-FALLBACK] ${provName} failed:`, err.message);
+                lastError = err;
             }
+        }
+
+        if (!success) {
+            const isEnglish = activeInstruction.includes('en-US') || activeInstruction.toLowerCase().includes('english');
+            let fallbackReply = '';
+            
+            if (lastError && (lastError.message.includes('429') || lastError.message.toLowerCase().includes('rate_limit') || lastError.message.toLowerCase().includes('quota'))) {
+                fallbackReply = isEnglish ? 
+                    "The AI provider is currently busy or rate-limited. Please try again shortly." :
+                    "Şu anda yapay zeka sağlayıcısı yoğun veya limit dolu. Biraz sonra tekrar deneyebiliriz.";
+            } else {
+                fallbackReply = isEnglish ? 
+                    "The AI provider is currently busy. Please try again shortly." :
+                    "Şu anda yapay zeka sağlayıcısı yoğun. Biraz sonra tekrar deneyebiliriz.";
+            }
+
+            if (!res.headersSent) {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+            }
+            res.write(`data: ${JSON.stringify({ text: fallbackReply, providerStatus: 'Rate Limited', isRateLimited: true })}\n\n`);
+            res.end();
         }
     } catch (error) {
         console.error("Akis esnasında genel hata olustu:", error);
@@ -151,6 +190,7 @@ app.post('/api/chat/complete', async (req, res) => {
             return res.status(400).json({ error: "Mesaj bos olamaz." });
         }
 
+        const activeInstruction = systemInstruction || "";
         let selectedProviderName = provider || getDefaultProvider();
         let providerInstance;
 
@@ -163,34 +203,37 @@ app.post('/api/chat/complete', async (req, res) => {
 
         console.log(`[LLM-1] chatComplete başlatıldı. Sağlayıcı: ${selectedProviderName}`);
 
-        try {
-            const text = await providerInstance.chatComplete({
-                message,
-                systemInstruction,
-                apiKey
-            });
-            res.json({ text });
-        } catch (err) {
-            console.warn(`[LLM-WARN] chatComplete ${selectedProviderName} başarısız oldu, failover deneniyor... Hata:`, err.message);
+        let success = false;
+        let lastError = null;
 
-            const otherProviderName = selectedProviderName === 'groq' ? 'gemini' : 'groq';
+        const providersToTry = [selectedProviderName];
+        if (!providersToTry.includes('gemini')) providersToTry.push('gemini');
+        if (!providersToTry.includes('groq')) providersToTry.push('groq');
+
+        for (const provName of providersToTry) {
             try {
-                const fallbackInstance = getProvider(otherProviderName);
-                if (fallbackInstance.isAvailable()) {
-                    console.log(`[LLM-2] chatComplete failover başlatıldı. Sağlayıcı: ${otherProviderName}`);
-                    const text = await fallbackInstance.chatComplete({
-                        message,
-                        systemInstruction,
-                        apiKey
-                    });
-                    res.json({ text });
-                } else {
-                    throw new Error(`${otherProviderName} kullanılabilir değil.`);
-                }
-            } catch (fallbackErr) {
-                console.error("[LLM-ERR] chatComplete her iki sağlayıcı da başarısız oldu:", fallbackErr.message);
-                res.status(500).json({ error: `Yapay zeka yanıtı üretilemedi. Hata: ${fallbackErr.message}` });
+                const instance = getProvider(provName);
+                if (!instance.isAvailable()) continue;
+                const text = await instance.chatComplete({
+                    message,
+                    systemInstruction: activeInstruction,
+                    apiKey
+                });
+                res.json({ text, providerStatus: 'Success', isRateLimited: false });
+                success = true;
+                break;
+            } catch (err) {
+                console.warn(`[PROVIDER-COMPLETE-FALLBACK] ${provName} failed:`, err.message);
+                lastError = err;
             }
+        }
+
+        if (!success) {
+            const isEnglish = activeInstruction.includes('en-US') || activeInstruction.toLowerCase().includes('english');
+            const fallbackReply = isEnglish ? 
+                "The AI provider is currently busy or rate-limited. Please try again shortly." :
+                "Şu anda yapay zeka sağlayıcısı yoğun veya limit dolu. Biraz sonra tekrar deneyebiliriz.";
+            res.json({ text: fallbackReply, providerStatus: 'Rate Limited', isRateLimited: true });
         }
     } catch (error) {
         console.error("chatComplete esnasında genel hata olustu:", error);

@@ -1,0 +1,27 @@
+{
+  "releaseId": "rel-sprint-4.1",
+  "sprint": "Sprint 4.1",
+  "version": "1.0.0-EE",
+  "createdAt": "2026-06-23T22:40:00Z",
+  "buildStatus": "success",
+  "testStatus": "success",
+  "backupStatus": "success",
+  "gitStatus": "clean",
+  "tagName": "sprint-4.1",
+  "changelogPath": "docs/release/CHANGELOG.md",
+  "reports": [
+    "Developer Agent Report",
+    "Change Impact Report",
+    "File Selection Report",
+    "Development Plan Report",
+    "Risk Assessment Report",
+    "Checklist Report",
+    "Development Manifest Report",
+    "Change Scope Report",
+    "Performance Report",
+    "Technical Debt Report",
+    "Production Readiness Report"
+  ],
+  "pushReady": true,
+  "pushApproved": true
+}

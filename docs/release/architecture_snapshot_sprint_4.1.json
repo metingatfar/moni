@@ -1,0 +1,35 @@
+{
+  "engineHierarchy": [
+    "AutonomousExecutive",
+    "ExecutiveBrain",
+    "ReasoningEngine",
+    "PlanningEngine",
+    "ToolIntelligenceEngine",
+    "RepositoryIntelligenceEngine",
+    "CodeIntelligenceEngine",
+    "DeveloperAgent"
+  ],
+  "dependencies": {
+    "AutonomousExecutive": ["ExecutiveBrain"],
+    "ExecutiveBrain": [
+      "ReasoningEngine",
+      "PlanningEngine",
+      "ToolIntelligenceEngine",
+      "CognitiveLearningEngine",
+      "RepositoryIntelligenceEngine",
+      "CodeIntelligenceEngine",
+      "DeveloperAgent"
+    ],
+    "DeveloperAgent": [
+      "RepositoryIntelligenceEngine",
+      "CodeIntelligenceEngine"
+    ]
+  },
+  "statistics": {
+    "totalEngines": 12,
+    "totalServices": 34,
+    "totalModules": 58
+  },
+  "architectureVersion": "EE-v4.1",
+  "timestamp": "2026-06-23T22:40:00Z"
+}

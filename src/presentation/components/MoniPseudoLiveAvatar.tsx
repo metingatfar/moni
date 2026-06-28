@@ -19,28 +19,12 @@ export const MoniPseudoLiveAvatar: React.FC<MoniPseudoLiveAvatarProps> = ({
   audioLevel: _audioLevel = 0,
   mood: _mood = 'neutral',
   avatarType: _avatarType = 'image',
-  eyeColor = 'green-glowing',
+  eyeColor: _eyeColor = 'green-glowing',
   animationsEnabled = true,
   mouthAnimationEnabled = true,
   effectsIntensity = 'medium'
 }) => {
-  // Resolve image source based on eyeColor
-  const getImageSrc = () => {
-    switch (eyeColor) {
-      case 'blue':
-        return '/avatar_woman_blue.png';
-      case 'black':
-        return '/avatar_woman_black.png';
-      case 'purple':
-        return '/avatar_woman_purple.png';
-      case 'gold':
-        return '/avatar_woman_gold.png';
-      case 'green':
-        return '/avatar_woman.png';
-      default:
-        return '/avatar_woman_green.png';
-    }
-  };
+  // Resolve image source based on eyeColor (bypassed in Orb mode)
 
   // Determine glow intensity opacity modifiers
   const getGlowOpacity = (baseVal: number) => {
@@ -64,13 +48,22 @@ export const MoniPseudoLiveAvatar: React.FC<MoniPseudoLiveAvatarProps> = ({
                 : 'none'
       }}
     >
-      {/* 1. Base Static Image (fixed, no motion) */}
-      <img
-        src={getImageSrc()}
-        alt="Moni Avatar Base"
-        className="moni-pseudo-bg-image"
+      {/* 1. Base AI Core Orb Placeholder (no female image) */}
+      <div
+        className={`moni-ai-orb ${status}`}
         style={{
-          filter: status === 'error' ? 'grayscale(30%)' : 'none'
+          width: '100%',
+          height: '100%',
+          borderRadius: '50%',
+          position: 'absolute',
+          transition: 'all 0.4s ease',
+          animation: status === 'listening'
+            ? 'orb-listen 1.5s infinite ease-in-out'
+            : status === 'thinking'
+              ? 'orb-think 2s linear infinite'
+              : status === 'speaking'
+                ? 'orb-speak 0.7s infinite alternate ease-in-out'
+                : 'orb-breathe 4s infinite ease-in-out'
         }}
       />
 

@@ -1,28 +1,56 @@
 import type { ReleaseManifest } from './ReleaseManifest';
+import { qualityGate } from '../enterprise/QualityGate';
+import { projectFingerprint } from '../enterprise/ProjectFingerprint';
+import { projectHealthEngine } from '../enterprise/ProjectHealthEngine';
+import { auditTrail } from '../enterprise/AuditTrail';
 
 export class ReleaseManager {
   private lastManifest: ReleaseManifest | null = null;
   private pushApproved = false;
 
   public async runReleaseDryRun(): Promise<{ success: boolean; manifest: ReleaseManifest }> {
+    const health = projectHealthEngine.calculateHealth();
+    const gate = qualityGate.checkGate();
+    const fingerprint = projectFingerprint.generateFingerprint();
+    console.log('Secure fingerprint generated for release dry run:', fingerprint);
+
     const manifest: ReleaseManifest = {
       releaseId: 'rel-' + Date.now(),
-      sprint: 'Sprint 3.6.1',
-      version: '1.0.0',
+      sprint: 'Sprint 4.1',
+      version: '1.0.0-EE',
       createdAt: new Date().toISOString(),
-      buildStatus: 'success',
-      testStatus: 'success',
+      buildStatus: health.buildStatus,
+      testStatus: health.testPassRate === 100 ? 'success' : 'failed',
       backupStatus: 'success',
       gitStatus: 'clean',
-      tagName: 'sprint-3.6.1',
-      changelogPath: 'docs/release/changelog_3.6.1.md',
-      reports: ['Release Manager Report', 'Backup System Report', 'Restore System Report'],
-      pushReady: true,
+      tagName: 'sprint-4.1',
+      changelogPath: 'docs/release/CHANGELOG.md',
+      reports: [
+        'Enterprise Security Report',
+        'Backup Encryption Report',
+        'Backup Verification Report',
+        'Architecture Snapshot Report',
+        'Project Fingerprint Report',
+        'Audit Trail Report',
+        'Recovery Report',
+        'Project Health Report',
+        'Dependency Report',
+        'Version Compatibility Report',
+        'Release Report',
+        'Production Readiness Report'
+      ],
+      pushReady: gate.passed,
       pushApproved: this.pushApproved
     };
 
+    if (gate.passed) {
+      auditTrail.logAction('Release Finished', 'Success');
+    } else {
+      auditTrail.logAction('Release Finished', 'Failed: ' + gate.reason);
+    }
+
     return {
-      success: true,
+      success: gate.passed,
       manifest
     };
   }
@@ -36,11 +64,12 @@ export class ReleaseManager {
     if (this.lastManifest) {
       this.lastManifest.pushApproved = approved;
     }
+    auditTrail.logAction(approved ? 'Push Approved' : 'Push Rejected', 'Success');
   }
 
   public getDiagnostics() {
     return {
-      currentSprint: 'Sprint 3.6.1',
+      currentSprint: 'Sprint 4.1',
       lastReleaseAt: this.lastManifest?.createdAt || 'Never',
       lastBuildStatus: this.lastManifest?.buildStatus || 'untested',
       lastTestStatus: this.lastManifest?.testStatus || 'untested',
@@ -55,3 +84,4 @@ export class ReleaseManager {
 }
 export const releaseManager = new ReleaseManager();
 export default releaseManager;
+

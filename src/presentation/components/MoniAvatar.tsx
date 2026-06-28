@@ -1,7 +1,7 @@
 import React from 'react';
 
 export interface MoniAvatarProps {
-  status: 'idle' | 'listening' | 'thinking' | 'speaking' | 'error';
+  status: 'idle' | 'listening' | 'thinking' | 'speaking' | 'error' | 'offline' | 'working' | 'warning' | 'happy';
   isSpeaking: boolean;
   audioLevel?: number;
   mood?: 'neutral' | 'happy' | 'focused' | 'thinking' | 'alert';
@@ -23,23 +23,7 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({
   mouthAnimationEnabled = true,
   effectsIntensity = 'medium'
 }) => {
-  // Resolve image source based on eyeColor
-  const getImageSrc = () => {
-    switch (eyeColor) {
-      case 'blue':
-        return '/avatar_woman_blue.png';
-      case 'black':
-        return '/avatar_woman_black.png';
-      case 'purple':
-        return '/avatar_woman_purple.png';
-      case 'gold':
-        return '/avatar_woman_gold.png';
-      case 'green':
-        return '/avatar_woman.png';
-      default:
-        return '/avatar_woman_green.png'; // default / green-glowing
-    }
-  };
+  // Resolve image source based on eyeColor (bypassed in Orb mode)
 
   // Determine glow intensity opacity modifiers
   const getGlowOpacity = (baseVal: number) => {
@@ -88,6 +72,18 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({
   } else if (status === 'thinking') {
     pupilFill = '#ffd700';
     bgFill = 'rgba(255, 215, 0, 0.15)';
+  } else if (status === 'offline') {
+    pupilFill = 'var(--color-muted)';
+    bgFill = 'rgba(255, 255, 255, 0.02)';
+  } else if (status === 'working') {
+    pupilFill = 'var(--accent-gold)';
+    bgFill = 'rgba(245, 158, 11, 0.15)';
+  } else if (status === 'warning') {
+    pupilFill = 'var(--accent-red)';
+    bgFill = 'rgba(239, 68, 68, 0.15)';
+  } else if (status === 'happy') {
+    pupilFill = 'var(--accent-green)';
+    bgFill = 'rgba(16, 185, 129, 0.15)';
   }
 
   // Eyebrow SVG paths based on Mood for Robot
@@ -227,35 +223,30 @@ export const MoniAvatar: React.FC<MoniAvatarProps> = ({
             }} />
           )}
 
-          <img
-            src={getImageSrc()}
-            alt="Moni Avatar"
+          <div
+            className={`moni-ai-orb ${status}`}
             style={{
               width: '100%',
               height: '100%',
-              objectFit: 'cover',
-              borderRadius: '24px',
+              borderRadius: '50%',
               transition: 'all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)',
-              boxShadow: status === 'listening'
-                ? `0 0 25px rgba(0, 240, 255, ${getGlowOpacity(0.55)})`
-                : status === 'thinking'
-                  ? `0 0 25px rgba(255, 215, 0, ${getGlowOpacity(0.55)})`
-                  : status === 'speaking'
-                    ? `0 0 25px rgba(157, 78, 221, ${getGlowOpacity(0.55)})`
-                    : status === 'error'
-                      ? `0 0 35px rgba(255, 56, 56, ${getGlowOpacity(0.75)})`
-                      : 'none',
-              animation: !animationsEnabled 
-                ? 'none' 
+              animation: !animationsEnabled
+                ? 'none'
                 : status === 'listening'
-                  ? 'avatar-pulse-scale 1.5s infinite ease-in-out'
+                  ? 'orb-listen 1.5s infinite ease-in-out'
                   : status === 'thinking'
-                    ? 'avatar-pulse-opacity 2s infinite ease-in-out'
+                    ? 'orb-think 2s linear infinite'
                     : status === 'speaking'
-                      ? 'avatar-speak-scale 0.4s infinite alternate ease-in-out'
-                      : status === 'error'
-                        ? 'avatar-shake 0.3s infinite linear'
-                        : 'avatar-float 6s infinite ease-in-out'
+                      ? 'orb-speak 0.7s infinite alternate ease-in-out'
+                      : status === 'offline'
+                        ? 'none'
+                        : status === 'working'
+                          ? 'orb-working 2.5s infinite ease-in-out'
+                          : status === 'warning'
+                            ? 'orb-warning 1.8s infinite ease-in-out'
+                            : status === 'happy'
+                              ? 'orb-happy 3.5s infinite ease-in-out'
+                              : 'orb-breathe 4s infinite ease-in-out'
             }}
           />
 

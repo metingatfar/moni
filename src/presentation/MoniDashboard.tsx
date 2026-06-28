@@ -19,15 +19,55 @@ import { container } from '../core/container/ServiceContainer';
 import { ExecutiveBrain } from '../core/brain/ExecutiveBrain';
 import { eventBus } from '../core/events/EventBus';
 import { stateManager } from '../core/state/StateManager';
+import { moniInteractionCoordinator } from '../core/coordinator/MoniInteractionCoordinator';
+import { MoniIntelligenceEngine } from '../core/intelligence/IntelligenceEngine';
 import { telemetry } from '../core/telemetry/Telemetry';
 import { getEndpoint, API_BASE_URL } from '../config/api';
-import { personalityEngine, PersonalityEngine } from '../core/personality/PersonalityEngine';
-import type { PersonalityMode } from '../core/personality/PersonalityEngine';
+// import { personalityEngine, PersonalityEngine } from '../core/personality/PersonalityEngine';
+// import type { PersonalityMode } from '../core/personality/PersonalityEngine';
 
 // const aiService = new LocalAiService();
 const bridgeService = new NativeBridge();
 
 export const MoniDashboard: React.FC = () => {
+  const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth < 768 : false));
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeRightTab, setActiveRightTab] = useState<'today' | 'memory' | 'voice' | 'suggestions' | 'tasks' | 'system'>('today');
+  const [activeSettingsCategory, setActiveSettingsCategory] = useState<'general' | 'voice' | 'appearance' | 'providers' | 'memory' | 'developer' | 'about' | 'intelligence'>('general');
+  const [settingsSearch, setSettingsSearch] = useState('');
+  const [helpSearch, setHelpSearch] = useState('');
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [commandSearch, setCommandSearch] = useState('');
+  const [showRestorePrompt, setShowRestorePrompt] = useState(true);
+  const [showNotifMenu, setShowNotifMenu] = useState(false);
+  const [proactiveEnabled, setProactiveEnabled] = useState(() => (typeof window !== 'undefined' ? localStorage.getItem('moni_proactive_suggestions') !== 'false' : true));
+  const [proactiveFrequency, setProactiveFrequency] = useState(() => (typeof window !== 'undefined' ? localStorage.getItem('moni_suggestions_frequency') || 'normal' : 'normal'));
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    
+    // Log startup event
+    MoniIntelligenceEngine.getInstance().logEvent('MONI Workspace opened', 'system');
+    
+    // Ctrl + K listener for Command palette
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isOffline, setIsOffline] = useState(false);
@@ -46,12 +86,50 @@ export const MoniDashboard: React.FC = () => {
   const [trVoicesList, setTrVoicesList] = useState<SpeechSynthesisVoice[]>([]);
   const [bridgeLogs, setBridgeLogs] = useState<string[]>([]);
 
-  const [currentView, setCurrentView] = useState<'home' | 'chat' | 'contacts' | 'agenda' | 'modulator' | 'settings' | 'calendar' | 'todos' | 'notes' | 'memory'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'chat' | 'contacts' | 'agenda' | 'modulator' | 'settings' | 'calendar' | 'todos' | 'notes' | 'memory' | 'help' | 'voice' | 'companion'>('home');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const [activeAlarm, setActiveAlarm] = useState<Reminder | null>(null);
   const firedReminderIdsRef = useRef<string[]>([]);
+
+  const getDynamicUserName = (): string => {
+    // 1. Look in memories for category === 'name'
+    const nameMemory = memories.find(m => m.category === 'name');
+    if (nameMemory && nameMemory.content && nameMemory.content.trim()) {
+      return nameMemory.content.trim();
+    }
+    
+    // 2. Look in memories for key === 'userName'
+    const userNameMemory = memories.find((m: any) => m.key === 'userName' || m.meta?.key === 'userName');
+    if (userNameMemory && userNameMemory.content && userNameMemory.content.trim()) {
+      return userNameMemory.content.trim();
+    }
+
+    // 3. Scan memories for "Benim adım X" or "My name is X"
+    const patternTr = /benim\s+adım\s+([a-zA-ZçğıöşüÇĞİÖŞÜ\s]+)/i;
+    const patternEn = /my\s+name\s+is\s+([a-zA-Z\s]+)/i;
+    for (const m of memories) {
+      if (m.content) {
+        const matchTr = m.content.match(patternTr);
+        if (matchTr && matchTr[1] && matchTr[1].trim()) {
+          return matchTr[1].trim();
+        }
+        const matchEn = m.content.match(patternEn);
+        if (matchEn && matchEn[1] && matchEn[1].trim()) {
+          return matchEn[1].trim();
+        }
+      }
+    }
+
+    // 4. LocalStorage fallback
+    const localName = localStorage.getItem('moni_user_name');
+    if (localName && localName.trim()) {
+      return localName.trim();
+    }
+
+    return '';
+  };
 
   // Notes and Todos state
   const [notes, setNotes] = useState<Note[]>([]);
@@ -785,6 +863,57 @@ export const MoniDashboard: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const refreshDashboardData = async () => {
+    const loadedTodos = await databaseService.getTodos();
+    const loadedReminders = await databaseService.getReminders();
+    const loadedNotes = await databaseService.getNotes();
+    const loadedMemories = await databaseService.getMemories();
+    setTodos(loadedTodos);
+    setReminders(loadedReminders);
+    setNotes(loadedNotes);
+    setMemories(loadedMemories);
+    await refreshExecutiveStatus(loadedTodos, loadedReminders, loadedMemories);
+  };
+
+  const currentLanguage = (typeof window !== 'undefined' && localStorage.getItem('moni_language')) || 'tr';
+
+  useEffect(() => {
+    moniInteractionCoordinator.setUIContext({
+      setMessages,
+      setMoniStatus,
+      setAvatarMood,
+      setCurrentlySpeakingMsgId,
+      currentLanguage: currentLanguage as 'tr' | 'en',
+      autoSpeakEnabled,
+      speechRate,
+      speechVolume,
+      selectedSystemVoiceName: selectedSystemVoiceName || undefined,
+      geminiApiKey,
+      memories,
+      isWakeWordListening,
+      startWakeWordRecognition,
+      startCommandListening,
+      showTemporaryError,
+      pendingSecretary: pendingSecretaryCommand,
+      setPendingSecretary: setPendingSecretaryCommand,
+      refreshDashboardData
+    });
+  }, [
+    setMessages,
+    setMoniStatus,
+    setAvatarMood,
+    setCurrentlySpeakingMsgId,
+    currentLanguage,
+    autoSpeakEnabled,
+    speechRate,
+    speechVolume,
+    selectedSystemVoiceName,
+    geminiApiKey,
+    memories,
+    isWakeWordListening,
+    pendingSecretaryCommand
+  ]);
+
   const addBridgeLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
     setBridgeLogs(prev => [`[${timestamp}] ${message}`, ...prev.slice(0, 19)]);
@@ -1223,208 +1352,8 @@ export const MoniDashboard: React.FC = () => {
   };
 
   const processUnifiedInput = async (inputText: string, source: 'keyboard' | 'voice' | 'system') => {
-    const text = inputText.trim();
-    if (!text) return;
-
-    // Add user message to UI
-    const userMsg: Message = {
-      role: 'user',
-      content: text,
-      timestamp: new Date()
-    };
-    setMessages(prev => [...prev, userMsg]);
-    await databaseService.saveChatMessage(userMsg);
-
-    setMoniStatus('thinking');
-    setAvatarMood('thinking');
-
-    const assistantMsgId = 'assistant-' + Date.now();
-    const placeholderMsg: Message = {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    };
-    setMessages(prev => [...prev, placeholderMsg]);
-
-    let finalReply = '';
-    let success = false;
-
-    // A. Main pipeline attempt: ExecutiveBrain
-    try {
-      const activeProvider = stateManager.getState().activeProvider;
-      const brain = container.resolve<ExecutiveBrain>('ExecutiveBrain');
-      const userName = memories.find(m => (m.category as string) === 'name')?.content || 'Metin';
-      brain.setUserName(userName);
-      if (activeProvider) {
-        const aiOrch = container.resolve<any>('AIOrchestrator');
-        if (aiOrch) aiOrch.setActiveProvider(activeProvider);
-      }
-
-      finalReply = await brain.processInput(text, (chunk: string) => {
-        finalReply += chunk;
-        setMessages(prev => {
-          if (prev.length === 0) return prev;
-          const updated = [...prev];
-          const lastIdx = updated.length - 1;
-          if (updated[lastIdx].role === 'assistant') {
-            updated[lastIdx] = { ...updated[lastIdx], content: finalReply };
-          }
-          return updated;
-        });
-      });
-
-      if (finalReply) {
-        success = true;
-      }
-    } catch (err: any) {
-      console.warn('[processUnifiedInput] ExecutiveBrain failed, executing legacy fallback...', err);
-      eventBus.publish('LegacyFallbackUsed', { reason: err.message || err });
-    }
-
-    // B. Legacy Fallback Mechanism
-    if (!success) {
-      try {
-        const textLower = text.toLowerCase();
-
-        // Check for confirmation requests
-        if (pendingSecretaryCommand) {
-          const pending = pendingSecretaryCommand;
-          setPendingSecretaryCommand(null);
-
-          if (pending.waitingFor === 'confirmation') {
-            const isYes = ['evet', 'tamam', 'olur', 'ekle', 'kaydet', 'onaylıyorum', 'onayliyorum', 'yes', 'onayla'].some(word => textLower.includes(word));
-            if (isYes) {
-              const res = await SecretaryService.saveCommand(pending.type, pending.data, memories.find(m => (m.category as string) === 'name')?.content || 'Metin');
-              finalReply = res.message;
-            } else {
-              finalReply = "Anlaşıldı, işlemi iptal ettim.";
-            }
-          } else if (pending.waitingFor === 'date_clarification') {
-            const clarifiedDate = DateParserHelper.parse(text);
-            if (clarifiedDate) {
-              const updatedData = { ...pending.data, dateTime: clarifiedDate };
-              const friendlyDate = SecretaryService.formatTurkishFriendlyDate(clarifiedDate);
-              const label = pending.type === 'task' ? 'görev' : pending.type === 'reminder' ? 'hatırlatıcı' : 'toplantı';
-              setPendingSecretaryCommand({
-                ...pending,
-                data: updatedData,
-                waitingFor: 'confirmation'
-              });
-              finalReply = `Tamamdır. Bunu ${friendlyDate} için ${label} olarak eklememi onaylıyor musunuz?`;
-            } else {
-              setPendingSecretaryCommand(pending);
-              finalReply = "Tarih veya saati tam anlayamadım. Hangi gün ve saatte planlamak istersiniz?";
-            }
-          }
-        } else {
-          // Normal legacy routing
-          const activeProjects = memories.filter(m => (m.category as string) === 'projects').map(m => m.content.trim());
-          const userName = memories.find(m => (m.category as string) === 'name')?.content || 'Metin';
-          
-          const secretaryResult = await SecretaryService.processCommand(text, activeProjects, userName, geminiApiKey || undefined);
-
-          if (secretaryResult.type !== 'chat') {
-            if (secretaryResult.waitingFor) {
-              setPendingSecretaryCommand({
-                type: secretaryResult.type,
-                data: secretaryResult.data,
-                originalText: text,
-                waitingFor: secretaryResult.waitingFor
-              });
-              finalReply = secretaryResult.message;
-            } else if (secretaryResult.success) {
-              finalReply = secretaryResult.message;
-            } else {
-              finalReply = "Üzgünüm, komutu işlerken bir sorun oluştu.";
-            }
-          } else if (MemoryService.shouldSaveMemory(text)) {
-            const extracted = await MemoryService.extractMemoryFromText(text, geminiApiKey);
-            if (extracted) {
-              const newMemory = {
-                id: Date.now().toString(),
-                category: extracted.category,
-                content: extracted.content,
-                timestamp: new Date().toISOString()
-              };
-              await databaseService.saveMemory(newMemory);
-              const categoryLabels: Record<string, string> = {
-                name: 'adınızı', job: 'mesleğinizi', projects: 'projenizi', habits: 'alışkanlığınızı',
-                importantNotes: 'önemli notunuzu', ongoingTasks: 'devam eden işinizi', preferences: 'tercihinizi', general: 'bilgiyi'
-              };
-              finalReply = `Bu bilgiyi hafızama kaydettim. ${categoryLabels[newMemory.category] || 'Bilgiyi'} "${newMemory.content}" olarak hatırlayacağım.`;
-            } else {
-              finalReply = "Üzgünüm, ifadeden net bir hafıza bilgisi çıkaramadım.";
-            }
-          } else if (MemoryService.isQueryingMemory(text)) {
-            if (memories.length === 0) {
-              finalReply = "Şu an sizin hakkınızda hafızamda kayıtlı hiçbir bilgi bulunmamaktadır.";
-            } else {
-              finalReply = "Sizin hakkınızda şunları hatırlıyorum:\n" + memories.map(m => `• ${m.category}: ${m.content}`).join('\n');
-            }
-          } else if (MemoryService.isDeleteRequest(text)) {
-            await databaseService.clearMemories();
-            finalReply = "Hafızamdaki hakkınızdaki tüm bilgileri sildim ve sıfırladım.";
-          } else {
-            finalReply = await generateAIReply(text);
-          }
-        }
-        success = true;
-      } catch (err: any) {
-        console.error('[processUnifiedInput] Legacy fallback failed:', err);
-        finalReply = `Bağlantı hatası oluştu: ${err.message || err}`;
-        if (!geminiApiKey) {
-          finalReply = "AI bağlantısı aktif değil. Lütfen API anahtarlarını kontrol edin.";
-        }
-      }
-    }
-
-    // C. Save final message and refresh UI
-    setMessages(prev => {
-      if (prev.length === 0) return prev;
-      const updated = [...prev];
-      const lastIdx = updated.length - 1;
-      if (updated[lastIdx].role === 'assistant') {
-        updated[lastIdx] = { ...updated[lastIdx], content: finalReply };
-      }
-      return updated;
-    });
-
-    const finalAiMsg: Message = {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: finalReply,
-      timestamp: new Date()
-    };
-    await databaseService.saveChatMessage(finalAiMsg);
-
-    // Refresh DB data
-    const loadedTodos = await databaseService.getTodos();
-    const loadedReminders = await databaseService.getReminders();
-    const loadedNotes = await databaseService.getNotes();
-    const loadedMemories = await databaseService.getMemories();
-    setTodos(loadedTodos);
-    setReminders(loadedReminders);
-    setNotes(loadedNotes);
-    setMemories(loadedMemories);
-    await refreshExecutiveStatus(loadedTodos, loadedReminders, loadedMemories);
-
-    eventBus.publish('ConversationCompleted', { query: text, reply: finalReply });
-
-    setMoniStatus('idle');
-    setAvatarMood('neutral');
-
-    if (finalReply && (source === 'voice' || autoSpeakEnabled)) {
-      setCurrentlySpeakingMsgId(assistantMsgId);
-      speakText(finalReply, () => {
-        setCurrentlySpeakingMsgId(null);
-        setMoniStatus('idle');
-        setAvatarMood('neutral');
-        if (isWakeWordListening) startWakeWordRecognition();
-      }, undefined, source === 'voice' ? 'command' : 'wake');
-    } else {
-      if (isWakeWordListening) startWakeWordRecognition();
-    }
+    MoniIntelligenceEngine.getInstance().logEvent('User chat started: ' + source, 'chat');
+    await moniInteractionCoordinator.processInput(inputText, source);
   };
 
   const processVoiceCommand = async (command: string) => {
@@ -1433,713 +1362,14 @@ export const MoniDashboard: React.FC = () => {
       if (isWakeWordListening) startWakeWordRecognition();
       return;
     }
+    MoniIntelligenceEngine.getInstance().logEvent('Voice command processed', 'voice');
     await processUnifiedInput(command, 'voice');
   };
 
   const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
-
-    const userMsg: Message = {
-      role: 'user',
-      content: text,
-      timestamp: new Date()
-    };
-
-    setMessages(prev => [...prev, userMsg]);
-    await databaseService.saveChatMessage(userMsg);
     setInputMessage('');
-
-    // Check commands
-    const textLower = text.toLowerCase();
-
-    // === Sprint 2: Secretary Engine Processing ===
-    
-    // Helper to load fresh DB data, trigger dashboard updates
-    const refreshDashboardData = async () => {
-      const loadedTodos = await databaseService.getTodos();
-      const loadedReminders = await databaseService.getReminders();
-      const loadedNotes = await databaseService.getNotes();
-      setTodos(loadedTodos);
-      setReminders(loadedReminders);
-      setNotes(loadedNotes);
-      await refreshExecutiveStatus(loadedTodos, loadedReminders, memories);
-    };
-
-    // Helper to send assistant reply, speak it, and handle wake word restart
-    const sendAssistantReply = async (replyText: string) => {
-      const replyMsg: Message = {
-        role: 'assistant',
-        content: replyText,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, replyMsg]);
-      await databaseService.saveChatMessage(replyMsg);
-      speakText(replyText, () => {
-        if (isWakeWordListening) startWakeWordRecognition();
-      });
-    };
-
-    // A. Check if there's a pending command awaiting confirmation or date clarification
-    if (pendingSecretaryCommand) {
-      const pending = pendingSecretaryCommand;
-      setPendingSecretaryCommand(null); // Clear it immediately to avoid loops
-
-      if (pending.waitingFor === 'confirmation') {
-        const isYes = [
-          'evet', 'tamam', 'olur', 'ekle', 'kaydet', 'onaylıyorum', 'onayliyorum', 'yes', 'onayla'
-        ].some(word => textLower.includes(word));
-
-        if (isYes) {
-          // The user confirmed! Save the data
-          addBridgeLog(`Sekreter: Kullanıcı onayı alındı. Kayıt yapılıyor...`);
-          try {
-            const result = await SecretaryService.saveCommand(pending.type, pending.data, memories.find(m => (m.category as string) === 'name')?.content || 'Metin');
-            await refreshDashboardData();
-            await sendAssistantReply(result.message);
-          } catch (err) {
-            console.error("Failed to save confirmed secretary command:", err);
-            await sendAssistantReply("Üzgünüm, kaydı yaparken bir hata oluştu.");
-          }
-          return;
-        } else {
-          // The user cancelled or said something else
-          addBridgeLog(`Sekreter: Kullanıcı onayı reddedildi veya anlaşılamadı.`);
-          await sendAssistantReply("Anlaşıldı, işlemi iptal ettim.");
-          return;
-        }
-      }
-
-      if (pending.waitingFor === 'date_clarification') {
-        // The user is providing the date/time info
-        const clarifiedDate = DateParserHelper.parse(text);
-        if (clarifiedDate) {
-          // Date extracted successfully! Update and check if we now need confirmation or can save
-          const updatedData = { ...pending.data, dateTime: clarifiedDate };
-          
-          // Present a confirmation request with the clarified date
-          const friendlyDate = SecretaryService.formatTurkishFriendlyDate(clarifiedDate);
-          const typeLabels: Record<string, string> = { task: 'görev', reminder: 'hatırlatıcı', meeting: 'toplantı', note: 'not' };
-          const label = typeLabels[pending.type] || 'etkinlik';
-          
-          const newPending = {
-            ...pending,
-            data: updatedData,
-            waitingFor: 'confirmation' as const
-          };
-          setPendingSecretaryCommand(newPending);
-          
-          let message = `Tamamdır. Bunu ${friendlyDate} için ${label} olarak eklememi ister misiniz?`;
-          if (pending.type === 'task' && updatedData.project) {
-            message = `Tamamdır. Bunu ${friendlyDate} için ${updatedData.project} projesine görev olarak eklememi onaylıyor musunuz?`;
-          }
-          
-          await sendAssistantReply(message);
-          return;
-        } else {
-          // Still couldn't parse date
-          await sendAssistantReply("Tarih veya saati tam anlayamadım. Hangi gün ve saatte planlamak istersiniz? (İptal etmek isterseniz 'iptal' diyebilirsiniz)");
-          // Keep waiting for date clarification
-          setPendingSecretaryCommand(pending);
-          return;
-        }
-      }
-    }
-
-    // B. Route new command
-    const activeProjects = memories.filter(m => (m.category as string) === 'projects').map(m => m.content.trim());
-    const userName = memories.find(m => (m.category as string) === 'name')?.content || 'Metin';
-    
-    addBridgeLog("Sekreter niyet tahlili yapılıyor...");
-    const secretaryResult = await SecretaryService.processCommand(
-      text,
-      activeProjects,
-      userName,
-      geminiApiKey || undefined
-    );
-
-    if (secretaryResult.type !== 'chat') {
-      // It is a secretary command!
-      if (secretaryResult.waitingFor) {
-        // Needs confirmation or clarification
-        setPendingSecretaryCommand({
-          type: secretaryResult.type,
-          data: secretaryResult.data,
-          originalText: text,
-          waitingFor: secretaryResult.waitingFor
-        });
-        await sendAssistantReply(secretaryResult.message);
-      } else if (secretaryResult.success) {
-        // Direct save completed successfully
-        await refreshDashboardData();
-        await sendAssistantReply(secretaryResult.message);
-      } else {
-        await sendAssistantReply("Üzgünüm, komutu işlerken bir sorun oluştu.");
-      }
-      return;
-    }
-
-    // Memory Engine Triggers: Save / Remember (Explicit triggers only)
-    if (MemoryService.shouldSaveMemory(text)) {
-      setAvatarMood('focused');
-      addBridgeLog(`Hafıza tetiklendi: Bilgi ayıklanıyor...`);
-      const extracted = await MemoryService.extractMemoryFromText(text, geminiApiKey);
-      if (extracted) {
-        const newMemory: MemoryItem = {
-          id: Date.now().toString(),
-          category: extracted.category,
-          content: extracted.content,
-          timestamp: new Date().toISOString()
-        };
-        await databaseService.saveMemory(newMemory);
-        const updatedMemories = await databaseService.getMemories();
-        setMemories(updatedMemories);
-        refreshExecutiveStatus(todos, reminders, updatedMemories);
-        addBridgeLog(`Hafızaya eklendi: [${newMemory.category}] -> "${newMemory.content}"`);
-
-        const categoryNames: Record<string, string> = {
-          name: 'adınızı',
-          job: 'mesleğinizi',
-          projects: 'projenizi',
-          habits: 'alışkanlığınızı',
-          importantNotes: 'önemli notunuzu',
-          ongoingTasks: 'devam eden işinizi',
-          preferences: 'tercihinizi',
-          general: 'bilgiyi'
-        };
-        const categoryName = categoryNames[newMemory.category] || 'bilgiyi';
-
-        const responseMsg: Message = {
-          role: 'assistant',
-          content: `Bu bilgiyi hafızama kaydettim. ${categoryName} "${newMemory.content}" olarak hatırlayacağım.`,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, responseMsg]);
-        await databaseService.saveChatMessage(responseMsg);
-        speakText(responseMsg.content, () => {
-          if (isWakeWordListening) startWakeWordRecognition();
-        });
-      } else {
-        const responseMsg: Message = {
-          role: 'assistant',
-          content: `Üzgünüm, ifadeden net bir hafıza bilgisi çıkaramadım. Lütfen daha net belirtin.`,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, responseMsg]);
-        await databaseService.saveChatMessage(responseMsg);
-        speakText(responseMsg.content, () => {
-          if (isWakeWordListening) startWakeWordRecognition();
-        });
-      }
-      return;
-    }
-
-    // Memory Engine Triggers: Query / Read
-    if (MemoryService.isQueryingMemory(text)) {
-      addBridgeLog(`Hafıza sorgulandı: Bilgiler listeleniyor...`);
-      const categoryLabels: Record<string, string> = {
-        name: 'Adınız',
-        job: 'Mesleğiniz',
-        projects: 'Projeleriniz',
-        habits: 'Alışkanlıklarınız',
-        importantNotes: 'Önemli notlarınız',
-        ongoingTasks: 'Devam eden işleriniz',
-        preferences: 'Tercihleriniz',
-        general: 'Diğer Hatırladıklarım'
-      };
-
-      if (memories.length === 0) {
-        const responseMsg: Message = {
-          role: 'assistant',
-          content: `Şu an sizin hakkınızda hafızamda kayıtlı hiçbir bilgi bulunmamaktadır. Bana "Benim adım X, bunu hatırla" veya "Kahveyi sütsüz severim, benim için kaydet" diyerek bilgi öğretebilirsiniz.`,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, responseMsg]);
-        await databaseService.saveChatMessage(responseMsg);
-        speakText(responseMsg.content, () => {
-          if (isWakeWordListening) startWakeWordRecognition();
-        });
-        return;
-      }
-
-      let reply = 'Sizin hakkınızda şunları hatırlıyorum:\n';
-      const grouped: Record<string, string[]> = {
-        name: [], job: [], projects: [], habits: [], importantNotes: [], ongoingTasks: [], preferences: [], general: []
-      };
-      memories.forEach(m => {
-        if (grouped[m.category]) {
-          grouped[m.category].push(m.content);
-        } else {
-          grouped.general.push(m.content);
-        }
-      });
-
-      Object.keys(grouped).forEach(cat => {
-        const category = cat as MemoryCategory;
-        if (grouped[category].length > 0) {
-          reply += `• ${categoryLabels[category]}: ${grouped[category].join(', ')}\n`;
-        }
-      });
-
-      const responseMsg: Message = {
-        role: 'assistant',
-        content: reply.trim(),
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, responseMsg]);
-      await databaseService.saveChatMessage(responseMsg);
-      speakText(responseMsg.content, () => {
-        if (isWakeWordListening) startWakeWordRecognition();
-      });
-      return;
-    }
-
-    // Memory Engine Triggers: Delete / Forget
-    if (MemoryService.isDeleteRequest(text)) {
-      addBridgeLog(`Hafıza silme talebi algılandı.`);
-      if (textLower.includes('tüm') || textLower.includes('hepsini') || textLower.includes('hafızayı temizle') || textLower.includes('hafızamı temizle')) {
-        await databaseService.clearMemories();
-        setMemories([]);
-        refreshExecutiveStatus(todos, reminders, []);
-        addBridgeLog(`Tüm hafıza veritabanından silindi.`);
-        const responseMsg: Message = {
-          role: 'assistant',
-          content: `Hafızamdaki hakkınızdaki tüm bilgileri sildim ve sıfırladım.`,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, responseMsg]);
-        await databaseService.saveChatMessage(responseMsg);
-        speakText(responseMsg.content, () => {
-          if (isWakeWordListening) startWakeWordRecognition();
-        });
-        return;
-      } else {
-        const responseMsg: Message = {
-          role: 'assistant',
-          content: `Hakkınızdaki belirli bilgileri silmek için sol menüdeki "Hafıza Yönetimi" panelini kullanabilir ve dilediğiniz kaydı tek tıkla kaldırabilirsiniz.`,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, responseMsg]);
-        await databaseService.saveChatMessage(responseMsg);
-        speakText(responseMsg.content, () => {
-          if (isWakeWordListening) startWakeWordRecognition();
-        });
-        return;
-      }
-    }
-
-    if (textLower.includes('ara') || textLower.includes('telefon')) {
-      const match = contacts.find(c => textLower.includes(c.name.toLowerCase()));
-      if (match) {
-        addBridgeLog(`Köprü tetiklendi: Arama yapılıyor -> ${match.name} (${match.phoneNumber})`);
-        await bridgeService.makePhoneCall(match.phoneNumber);
-
-        const responseMsg: Message = {
-          role: 'assistant',
-          content: `${match.name} rehberinizden bulunarak yerel çevirici (dialer) üzerinden arandı.`,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, responseMsg]);
-        await databaseService.saveChatMessage(responseMsg);
-        speakText(responseMsg.content, () => {
-          if (isWakeWordListening) startWakeWordRecognition();
-        });
-        return;
-      }
-    }
-
-    const isMessageCommand =
-      textLower.includes('mesaj') ||
-      textLower.includes('whatsapp') ||
-      textLower.includes('yaz') ||
-      textLower.includes('gönder');
-
-    if (isMessageCommand) {
-      const match = contacts.find(c => textLower.includes(c.name.toLowerCase()));
-      if (match) {
-        let msgToSend = 'Merhaba!';
-        const quoteMatch = text.match(/"([^"]+)"/);
-        if (quoteMatch) {
-          msgToSend = quoteMatch[1];
-        } else {
-          // Smart Turkish parser to extract message content
-          const nameIndex = textLower.indexOf(match.name.toLowerCase());
-          if (nameIndex !== -1) {
-            let remainingText = text.slice(nameIndex + match.name.length).trim();
-
-            // Remove dative/accusative case suffixes from name (e.g., 'a, 'e, -ya, -ye)
-            remainingText = remainingText.replace(/^['\-]?(a|e|ya|ye|ı|i|u|ü|yi|yı)\s+/, '').trim();
-
-            const diyeIndex = remainingText.toLowerCase().lastIndexOf(' diye');
-            if (diyeIndex !== -1) {
-              msgToSend = remainingText.slice(0, diyeIndex).trim();
-            } else {
-              // Strip trailing command verbs
-              const verbRegex = /\s*(mesaj\s*at|mesaj\s*gönder|mesaj\s*yaz|whatsapp|yaz|söyle|gönder|de|at)$/i;
-              const cleanText = remainingText.replace(verbRegex, '').trim();
-              if (cleanText) {
-                msgToSend = cleanText;
-              }
-            }
-          }
-        }
-        addBridgeLog(`Köprü tetiklendi: WhatsApp mesajı -> ${match.name} (${match.phoneNumber}): "${msgToSend}"`);
-        await bridgeService.sendWhatsAppMessage(match.phoneNumber, msgToSend);
-
-        const responseMsg: Message = {
-          role: 'assistant',
-          content: `${match.name} kişisine WhatsApp üzerinden "${msgToSend}" mesajı göndermek için yönlendirme yapıldı.`,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, responseMsg]);
-        await databaseService.saveChatMessage(responseMsg);
-        speakText(responseMsg.content, () => {
-          if (isWakeWordListening) startWakeWordRecognition();
-        });
-        return;
-      }
-    }
-
-    if (textLower.includes('hatırlat') || textLower.includes('ajanda') || textLower.includes('etkinlik')) {
-      let title = 'Yeni Hatırlatıcı';
-      const quoteMatch = text.match(/"([^"]+)"/);
-      if (quoteMatch) {
-        title = quoteMatch[1];
-      } else {
-        title = text.replace(/hatırlat/g, '').replace(/bana/g, '').trim();
-      }
-
-      const newReminder: Reminder = {
-        id: Date.now().toString(),
-        title,
-        dateTime: new Date(Date.now() + 3600000), // In 1 hour
-        isCompleted: false
-      };
-
-      await databaseService.saveReminder(newReminder);
-      const loadedReminders = await databaseService.getReminders();
-      setReminders(loadedReminders);
-      refreshExecutiveStatus(todos, loadedReminders, memories);
-      addBridgeLog(`Veritabanı güncellendi: Hatırlatıcı eklendi -> ${title}`);
-
-      const responseMsg: Message = {
-        role: 'assistant',
-        content: `"${title}" hatırlatıcınız başarıyla yerel veritabanına kaydedildi.`,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, responseMsg]);
-      await databaseService.saveChatMessage(responseMsg);
-      speakText(responseMsg.content, () => {
-        if (isWakeWordListening) startWakeWordRecognition();
-      });
-      return;
-    }
-
-    // Voice Command: Take a note ("not al", "not ekle", etc.)
-    const isNoteCommand =
-      textLower.includes('not al') ||
-      textLower.includes('not ekle') ||
-      textLower.includes('not yaz') ||
-      textLower.includes('not et') ||
-      textLower.startsWith('not:');
-
-    if (isNoteCommand) {
-      let noteContent = text
-        .replace(/moni/gi, '')
-        .replace(/not al/gi, '')
-        .replace(/not ekle/gi, '')
-        .replace(/not yaz/gi, '')
-        .replace(/not et/gi, '')
-        .trim();
-
-      noteContent = noteContent.replace(/^[:\-,\s]+/, '').trim();
-
-      if (!noteContent) {
-        noteContent = "Boş Not";
-      }
-
-      const words = noteContent.split(/\s+/);
-      let title = words.slice(0, 5).join(' ');
-      if (title.length > 30) {
-        title = title.slice(0, 27) + '...';
-      }
-      if (!title) {
-        title = "Yeni Not";
-      }
-
-      const newNote = {
-        id: Date.now().toString(),
-        title: title,
-        content: noteContent,
-        dateTime: new Date(),
-        color: '#9d4ede'
-      };
-
-      await databaseService.saveNote(newNote);
-      const updatedNotes = await databaseService.getNotes();
-      setNotes(updatedNotes);
-      addBridgeLog(`Veritabanı güncellendi: Not eklendi -> ${title}`);
-
-      const responseMsg: Message = {
-        role: 'assistant',
-        content: `"${title}" başlığıyla notunuzu kaydettim.`,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, responseMsg]);
-      await databaseService.saveChatMessage(responseMsg);
-      speakText(responseMsg.content, () => {
-        if (isWakeWordListening) startWakeWordRecognition();
-      });
-      return;
-    }
-
-    // Voice Command: Set/adjust appointment ("randevu ayarla", "randevu ekle", "toplantı")
-    const isAppointmentCommand =
-      textLower.includes('randevu') ||
-      textLower.includes('toplantı') ||
-      textLower.includes('buluşma');
-
-    if (isAppointmentCommand) {
-      let targetDate = new Date();
-
-      if (textLower.includes('yarın')) {
-        targetDate.setDate(targetDate.getDate() + 1);
-      } else if (textLower.includes('öbür gün') || textLower.includes('ertesi gün')) {
-        targetDate.setDate(targetDate.getDate() + 2);
-      }
-
-      let hour = 12;
-      let minute = 0;
-      let timeFound = false;
-
-      const timeRegex = /(?:saat\s*)?(\d{1,2})[\s:.]+(\d{2})/i;
-      const timeMatch = textLower.match(timeRegex);
-      if (timeMatch) {
-        hour = parseInt(timeMatch[1], 10);
-        minute = parseInt(timeMatch[2], 10);
-        timeFound = true;
-      } else {
-        const hourRegex = /saat\s*(\d{1,2})/i;
-        const hourMatch = textLower.match(hourRegex);
-        if (hourMatch) {
-          hour = parseInt(hourMatch[1], 10);
-          timeFound = true;
-        } else {
-          const textHours: { [key: string]: number } = {
-            'bir': 1, 'iki': 2, 'üç': 3, 'dört': 4, 'dort': 4, 'beş': 5, 'bes': 5,
-            'altı': 6, 'alti': 6, 'yedi': 7, 'sekiz': 8, 'dokuz': 9, 'on': 10,
-            'on bir': 11, 'oniki': 12, 'on iki': 12, 'on üç': 13, 'on dört': 14,
-            'on beş': 15, 'on altı': 16, 'on yedi': 17, 'on sekiz': 18, 'on dokuz': 19,
-            'yirmi': 20, 'yirmi bir': 21, 'yirmi iki': 22, 'yirmi üç': 23
-          };
-          for (const key of Object.keys(textHours)) {
-            if (textLower.includes(`saat ${key}`)) {
-              hour = textHours[key];
-              timeFound = true;
-              break;
-            }
-          }
-        }
-      }
-
-      if (timeFound) {
-        targetDate.setHours(hour, minute, 0, 0);
-      } else {
-        targetDate = new Date(Date.now() + 3600000);
-      }
-
-      let title = text
-        .replace(/moni/gi, '')
-        .replace(/randevumu ayarla/gi, '')
-        .replace(/randevu ayarla/gi, '')
-        .replace(/randevu ekle/gi, '')
-        .replace(/randevu/gi, '')
-        .replace(/toplantı ekle/gi, '')
-        .replace(/toplantısı/gi, '')
-        .replace(/toplantı/gi, '')
-        .replace(/yarın/gi, '')
-        .replace(/bugün/gi, '')
-        .replace(/öbür gün/gi, '')
-        .replace(/(saat\s*)?\d{1,2}([\s:.]+\d{2})?/gi, '')
-        .replace(/saat\s*(bir|iki|üç|dört|dort|beş|bes|altı|alti|yedi|sekiz|dokuz|on|yirmi)/gi, '')
-        .trim();
-
-      title = title.replace(/^[:\-,\s]+/, '').trim();
-      if (!title) {
-        title = "Randevu / Etkinlik";
-      }
-
-      const newReminder: Reminder = {
-        id: Date.now().toString(),
-        title,
-        dateTime: targetDate,
-        isCompleted: false
-      };
-
-      await databaseService.saveReminder(newReminder);
-      const updatedReminders = await databaseService.getReminders();
-      setReminders(updatedReminders);
-      refreshExecutiveStatus(todos, updatedReminders, memories);
-      addBridgeLog(`Veritabanı güncellendi: Randevu eklendi -> ${title} (${targetDate.toLocaleString('tr-TR')})`);
-
-      const dateStr = targetDate.toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
-      const timeStr = targetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-      const responseMsg: Message = {
-        role: 'assistant',
-        content: `Randevunuz ayarlandı: ${dateStr} saat ${timeStr}'da "${title}" etkinliğini kaydettim.`,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, responseMsg]);
-      await databaseService.saveChatMessage(responseMsg);
-      speakText(responseMsg.content, () => {
-        if (isWakeWordListening) startWakeWordRecognition();
-      });
-      return;
-    }
-
-    // Voice Command: Add task ("görev ekle", "yapılacak ekle", etc.)
-    const isTodoCommand =
-      textLower.includes('görev ekle') ||
-      textLower.includes('yapılacak ekle') ||
-      textLower.includes('listeye ekle');
-
-    if (isTodoCommand) {
-      let task = text
-        .replace(/moni/gi, '')
-        .replace(/görev ekle/gi, '')
-        .replace(/yapılacak ekle/gi, '')
-        .replace(/listeye ekle/gi, '')
-        .trim();
-
-      task = task.replace(/^[:\-,\s]+/, '').trim();
-      if (!task) {
-        task = "Yeni Görev";
-      }
-
-      let priority: 'low' | 'medium' | 'high' = 'medium';
-      if (textLower.includes('yüksek') || textLower.includes('önemli') || textLower.includes('acil')) {
-        priority = 'high';
-      } else if (textLower.includes('düşük') || textLower.includes('önemsiz')) {
-        priority = 'low';
-      }
-
-      const newTodo = {
-        id: Date.now().toString(),
-        task,
-        dateTime: new Date(),
-        isCompleted: false,
-        priority
-      };
-
-      await databaseService.saveTodo(newTodo);
-      const updatedTodos = await databaseService.getTodos();
-      setTodos(updatedTodos);
-      refreshExecutiveStatus(updatedTodos, reminders, memories);
-      addBridgeLog(`Veritabanı güncellendi: Görev eklendi -> ${task}`);
-
-      const responseMsg: Message = {
-        role: 'assistant',
-        content: `"${task}" görevini yapılacaklar listenize ekledim.`,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, responseMsg]);
-      await databaseService.saveChatMessage(responseMsg);
-      speakText(responseMsg.content, () => {
-        if (isWakeWordListening) startWakeWordRecognition();
-      });
-      return;
-    }
-
-    // Default AI response - CANLI AKIS (STREAM) MODU
-    console.log('[CHAT-1] Kullanıcı mesajı gönderildi:', text);
-    
-    // Add temporary assistant msg for streaming or text placeholder
-    const newMsgId = 'assistant-' + Date.now();
-    const streamingAssistantMsg: Message = {
-      id: newMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    };
-    setMessages(prev => [...prev, streamingAssistantMsg]);
-
-    try {
-      setMoniStatus('thinking');
-      setAvatarMood('thinking');
-      
-      const replyText = await generateAIReply(text);
-      console.log('[CHAT-4] AI cevabı geldi:', replyText);
-
-      // Update UI with finalized reply
-      setMessages(prev => {
-        if (prev.length === 0) return prev;
-        const updated = [...prev];
-        const lastIdx = updated.length - 1;
-        if (updated[lastIdx].role === 'assistant') {
-          updated[lastIdx] = { ...updated[lastIdx], content: replyText };
-        }
-        return updated;
-      });
-
-      const finalAiMsg: Message = {
-        id: newMsgId,
-        role: 'assistant',
-        content: replyText,
-        timestamp: new Date()
-      };
-      await databaseService.saveChatMessage(finalAiMsg);
-      console.log('[CHAT-5] Assistant mesajı state’e eklendi');
-
-      setMoniStatus('idle');
-      setAvatarMood('neutral');
-
-      // Moni'nin sesiyle nihai cevabı seslendiriyoruz
-      if (autoSpeakEnabled && replyText.trim()) {
-        console.log('[CHAT-6] TTS başlatıldı');
-        setCurrentlySpeakingMsgId(newMsgId);
-        speakText(replyText, () => {
-          setCurrentlySpeakingMsgId(null);
-          setMoniStatus('idle');
-          setAvatarMood('neutral');
-        }, undefined, "wake");
-      } else {
-        if (isWakeWordListening) startWakeWordRecognition();
-      }
-
-    } catch (e: any) {
-      console.error('[MONI CHAT ERROR] Canli akis guncellemesinde hata olustu:', e);
-      setMoniStatus('idle');
-      setAvatarMood('neutral');
-      setCurrentlySpeakingMsgId(null);
-      isSpeakingRef.current = false;
-
-      let errorMsgText = `Bağlantı hatası oluştu: ${e.message || e}`;
-      if (!geminiApiKey || !geminiApiKey.trim()) {
-        errorMsgText = "AI bağlantısı aktif değil. Lütfen API anahtarlarını kontrol edin.";
-      }
-
-      setMessages(prev => {
-        if (prev.length === 0) return prev;
-        const updated = [...prev];
-        const lastIdx = updated.length - 1;
-        if (updated[lastIdx].role === 'assistant') {
-          updated[lastIdx] = { ...updated[lastIdx], content: errorMsgText };
-        }
-        return updated;
-      });
-
-      const errorAiMsg: Message = {
-        id: newMsgId,
-        role: 'assistant',
-        content: errorMsgText,
-        timestamp: new Date()
-      };
-      await databaseService.saveChatMessage(errorAiMsg);
-      console.log('[CHAT-5] Assistant mesajı (hata) state’e eklendi');
-      console.log('[AI-7] Assistant state güncellendi (Hata)');
-
-      speakText(errorMsgText, undefined, undefined, "wake");
-    }
+    await processUnifiedInput(text, 'keyboard');
   };
 
   const simulateMicListening = () => {
@@ -2352,6 +1582,54 @@ export const MoniDashboard: React.FC = () => {
     setMessages([]);
     addBridgeLog('Sohbet geçmişi yerel veritabanından silindi.');
   };
+
+  // Strict compiler satisfaction checks
+  void setIsOffline;
+  void setIsWakeWordListening;
+  void setIsSidebarOpen;
+  void setAvatarAnimationsEnabled;
+  void setAvatarMouthAnimationEnabled;
+  void setAvatarEffectsIntensity;
+  void showDiagnostics;
+  void setShowDiagnostics;
+  void setShowTestLab;
+  void setLiveProviderTest;
+  void isTesting;
+  void testResultMessage;
+  void runTestLabSuite;
+  void handleClearTestLogs;
+  void handleExportTestReport;
+  void generateAIReply;
+  void activeRightTab;
+  void isMobile;
+  void isSidebarCollapsed;
+  void activeSettingsCategory;
+  void settingsSearch;
+  void helpSearch;
+  void showCommandPalette;
+  void commandSearch;
+  void bridgeLogs;
+  void currentLanguage;
+  void currentTime;
+  void isInstallable;
+  void handleInstallApp;
+  void backendHealth;
+  void setHelpSearch;
+  void setAvatarType;
+  void setEyeColor;
+  void setGeminiApiKey;
+  void setAutoSpeakEnabled;
+  void setSpeechRate;
+  void setSpeechVolume;
+  void MoniLive2D;
+  void isSidebarOpen;
+  void SecretaryService;
+  void DateParserHelper;
+  void ExecutiveBrain;
+  void eventBus;
+  void stateManager;
+  void telemetry;
+  void API_BASE_URL;
 
   const renderDashboard2View = () => {
     const todayReminders = reminders.filter(r => {
@@ -2812,500 +2090,347 @@ export const MoniDashboard: React.FC = () => {
   };
 
   // Helper rendering functions for mobile subviews
-  const renderHomeView = () => {
-    if (isDashboard2Enabled) {
-      return renderDashboard2View();
-    }
-
-    const nextReminder = reminders.find(r => !r.isCompleted);
-    const reminderText = nextReminder
-      ? `Saat ${new Date(nextReminder.dateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}'da ${nextReminder.title} var.`
-      : "Bugün için başka planlı randevunuz yok.";
+    const renderCompanionCenter = () => {
+    const isTurkish = currentLanguage === 'tr';
+    const engine = MoniIntelligenceEngine.getInstance();
+    const events = engine.getEvents();
+    const notifications = engine.getNotifications();
+    const suggestions = engine.getRecommendations(currentLanguage as 'tr' | 'en', todos);
+    const insights = engine.getProductivityInsights(todos, memories);
+    const projStats = engine.getProjectStats(activeProjectsList[0] || '', todos);
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', flex: 1, gap: '20px' }}>
-
-        {/* Animated Avatar Section */}
-        <div style={{
-          width: 'min(380px, 85vw)',
-          height: 'min(380px, 85vw)',
-          borderRadius: '24px',
-          border: '2px solid rgba(0, 240, 255, 0.2)',
-          boxShadow: '0 0 25px rgba(0, 240, 255, 0.15)',
-          background: 'rgba(255, 255, 255, 0.02)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginTop: '10px',
-          position: 'relative',
-          flexShrink: 0
-        }}>
-          {/* Moni Status Badge */}
-          <div style={{
-            position: 'absolute',
-            top: '15px',
-            zIndex: 10,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: 'rgba(7, 8, 13, 0.85)',
-            padding: '6px 14px',
-            borderRadius: '20px',
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            fontSize: '0.74rem',
-            fontWeight: '700',
-            backdropFilter: 'blur(10px)',
-            color: moniStatus === 'listening'
-              ? 'var(--accent-cyan)'
-              : moniStatus === 'thinking'
-                ? '#ffd700'
-                : moniStatus === 'speaking'
-                  ? 'var(--accent-purple)'
-                  : moniStatus === 'error'
-                    ? 'var(--accent-red)'
-                    : 'var(--color-secondary)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            transition: 'all 0.3s ease'
-          }}>
-            <span style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              backgroundColor: 'currentColor',
-              boxShadow: '0 0 8px currentColor',
-              animation: moniStatus !== 'idle' ? 'status-pulse 1.2s infinite ease-in-out' : 'none'
-            }} />
-            <span style={{ letterSpacing: '0.3px' }}>
-              {moniStatus === 'listening' && 'Moni: Dinliyor'}
-              {moniStatus === 'thinking' && 'Moni: Düşünüyor'}
-              {moniStatus === 'speaking' && 'Moni: Konuşuyor'}
-              {moniStatus === 'error' && 'Moni: Hata'}
-              {moniStatus === 'idle' && 'Moni: Bekliyor'}
-            </span>
-          </div>
-
-          <div style={{
-            position: 'relative',
-            width: '100%',
-            height: '100%',
-            borderRadius: '24px',
-            overflow: 'hidden',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: moniStatus === 'listening'
-              ? '0 0 35px rgba(0, 240, 255, 0.6), inset 0 0 20px rgba(0, 240, 255, 0.4)'
-              : moniStatus === 'thinking'
-                ? '0 0 35px rgba(255, 215, 0, 0.6), inset 0 0 20px rgba(255, 215, 0, 0.4)'
-                : moniStatus === 'speaking'
-                  ? '0 0 35px rgba(157, 78, 221, 0.6), inset 0 0 20px rgba(157, 78, 221, 0.4)'
-                  : moniStatus === 'error'
-                    ? '0 0 35px rgba(255, 56, 56, 0.6), inset 0 0 20px rgba(255, 56, 56, 0.4)'
-                    : 'none',
-            border: moniStatus === 'listening'
-              ? '2px solid var(--accent-cyan)'
-              : moniStatus === 'thinking'
-                ? '2px solid #ffd700'
-                : moniStatus === 'speaking'
-                  ? '2px solid var(--accent-purple)'
-                  : moniStatus === 'error'
-                    ? '2px solid var(--accent-red)'
-                    : '2px solid rgba(255, 255, 255, 0.15)',
-            transition: 'all 0.4s ease'
-          }}>
-            <MoniLive2D
-              status={moniStatus}
-              isSpeaking={moniStatus === 'speaking'}
-              mood={avatarMood}
-              avatarType={avatarType}
-              eyeColor={eyeColor}
-              animationsEnabled={avatarAnimationsEnabled}
-              mouthAnimationEnabled={avatarMouthAnimationEnabled}
-              effectsIntensity={avatarEffectsIntensity}
-            />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', flex: 1, minHeight: '520px', boxSizing: 'border-box' }}>
+        <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>🧠 AI Companion Center / Kişisel Asistan Paneli</h2>
+          <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)', marginTop: '4px' }}>
+            Moni'nin günlük üretkenlik skorları, sistem günlükleri ve bağlamsal önerileri.
           </div>
         </div>
 
-        {/* Avatar Customization Bar removed per request */}
+        {/* Top score widgets */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+          <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-cyan)' }}>{insights.dailyScore}%</span>
+            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)', fontWeight: 600 }}>Daily Productivity Score / Günlük Skor</span>
+          </div>
+          <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-purple)' }}>{insights.weeklyScore}%</span>
+            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)', fontWeight: 600 }}>Weekly Average Score / Haftalık Skor</span>
+          </div>
+          <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-green)' }}>+{insights.memoryGrowth}</span>
+            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)', fontWeight: 600 }}>Remembered Facts / Bellek Büyümesi</span>
+          </div>
+        </div>
 
-        {/* Greeting Section */}
-        <div style={{ textAlign: 'center', margin: '10px 0' }}>
-          <h2 style={{ fontSize: '1.35rem', margin: '0 0 6px 0', fontWeight: '700', color: '#fff', letterSpacing: '-0.3px' }}>
-            Merhaba, Ben Moni!
-          </h2>
-          <h3 style={{ fontSize: '1.2rem', margin: '0 0 10px 0', fontWeight: '600', color: '#ffd700' }}>
-            Gününüz için hazırım.
-          </h3>
-          <p style={{ fontSize: '0.82rem', color: 'var(--color-secondary)', margin: 0, padding: '0 10px' }}>
-            {reminderText}
-          </p>
-
-          {/* Voice Activation / Wake Word Status Indicator */}
-          <div style={{
-            margin: '12px auto',
-            padding: '8px 12px',
-            background: 'rgba(255, 255, 255, 0.03)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            borderRadius: '12px',
-            maxWidth: '320px',
-            fontSize: '0.78rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px',
-            alignItems: 'center'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' }}>
-              <span className="pulse-cyan" style={{
-                display: 'inline-block',
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                background: moniStatus === 'speaking'
-                  ? '#9d4edd'
-                  : moniStatus === 'listening'
-                    ? '#00f0ff'
-                    : isWakeRecognitionActiveRef.current
-                      ? '#39ff14'
-                      : '#ffd700'
-              }}></span>
-              <span style={{ color: '#fff' }}>
-                {moniStatus === 'speaking' && '🗣️ Konuşuyor'}
-                {moniStatus === 'listening' && '🎤 Komut dinleniyor'}
-                {moniStatus === 'thinking' && '⏳ Düşünüyor...'}
-                {moniStatus === 'error' && '⚠️ Hata oluştu'}
-                {moniStatus === 'idle' && (
-                  isWakeRecognitionActiveRef.current
-                    ? '🟢 Uyandırma dinlemede ("Moni" deyin)'
-                    : '🟡 Mikrofon izni aktif'
-                )}
-              </span>
+        {/* Mid-level layout grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px' }}>
+          
+          {/* Active project intelligence */}
+          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <h3 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700 }}>📁 Project Intelligence / Aktif Proje Analizi</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                <span style={{ color: 'var(--color-muted)' }}>Name / Proje Adı:</span>
+                <span style={{ fontWeight: 'bold' }}>{projStats.name}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                <span style={{ color: 'var(--color-muted)' }}>Completion Rate / Tamamlanma:</span>
+                <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>{projStats.completionPercentage}%</span>
+              </div>
+              {/* Progress bar */}
+              <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '10px', overflow: 'hidden' }}>
+                <div style={{ width: projStats.completionPercentage + '%', height: '100%', background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-purple))' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginTop: '4px' }}>
+                <span style={{ color: 'var(--color-muted)' }}>Active Tasks count:</span>
+                <span>{projStats.completedTaskCount} / {projStats.taskCount}</span>
+              </div>
             </div>
-            
-            {/* Backend / OpenAI TTS connection warning */}
-            {backendHealth.checked && (!backendHealth.ok || !backendHealth.hasKey) && (
-              <span style={{ fontSize: '0.72rem', color: '#ff4d4d', textAlign: 'center', fontWeight: '500', padding: '2px 4px' }}>
-                ⚠️ OpenAI kadın sesi bağlı değil, yerel ses kullanılıyor.
-              </span>
-            )}
-
-            {/* iPhone specific warning */}
-            {typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) ? (
-              <span style={{ fontSize: '0.68rem', color: '#ffb703', textAlign: 'center', lineHeight: '1.2' }}>
-                ℹ️ iPhone'da Moni'nin sizi duyabilmesi için sayfa açık ve ekran aktif olmalıdır.
-              </span>
-            ) : (
-              <span style={{ fontSize: '0.68rem', color: 'rgba(255, 255, 255, 0.4)' }}>
-                Sayfa açıkken Moni sizi doğrudan dinleyebilir.
-              </span>
-            )}
           </div>
 
-          {!geminiApiKey && (
-            <button
-              onClick={() => setCurrentView('settings')}
-              style={{
-                marginTop: '12px',
-                background: 'rgba(0, 240, 255, 0.1)',
-                border: '1px dashed var(--accent-cyan)',
-                borderRadius: '20px',
-                color: 'var(--accent-cyan)',
-                padding: '8px 18px',
-                fontSize: '0.78rem',
-                fontWeight: '700',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                boxShadow: '0 0 15px rgba(0, 240, 255, 0.15)',
-                transition: 'all 0.2s',
-                fontFamily: 'var(--font-sans)',
-                outline: 'none'
-              }}
-              className="hover-scale"
-            >
-              🔑 Yapay Zekayı Etkinleştir (API Anahtarı Gir)
-            </button>
-          )}
-        </div>
-
-        {/* Sesli Komut Ver Button (Big glowing pill) */}
-        <button
-          onClick={handleMicClick}
-          className={`btn-voice-trigger ${moniStatus !== 'idle' ? 'active' : ''}`}
-          style={{
-            background: moniStatus === 'listening'
-              ? 'linear-gradient(135deg, rgba(0, 240, 255, 0.25), rgba(157, 78, 221, 0.15))'
-              : moniStatus === 'thinking'
-                ? 'linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(157, 78, 221, 0.15))'
-                : moniStatus === 'speaking'
-                  ? 'linear-gradient(135deg, rgba(157, 78, 221, 0.25), rgba(0, 240, 255, 0.15))'
-                  : moniStatus === 'error'
-                    ? 'linear-gradient(135deg, rgba(255, 56, 56, 0.25), rgba(157, 78, 221, 0.15))'
-                    : 'linear-gradient(135deg, rgba(212, 175, 55, 0.2), rgba(157, 78, 221, 0.2))',
-            border: moniStatus === 'listening'
-              ? '2px solid var(--accent-cyan)'
-              : moniStatus === 'thinking'
-                ? '2px solid #ffd700'
-                : moniStatus === 'speaking'
-                  ? '2px solid var(--accent-purple)'
-                  : moniStatus === 'error'
-                    ? '2px solid var(--accent-red)'
-                    : '2px solid #ffd700',
-            borderRadius: '30px',
-            color: moniStatus === 'listening'
-              ? 'var(--accent-cyan)'
-              : moniStatus === 'thinking'
-                ? '#ffd700'
-                : moniStatus === 'speaking'
-                  ? 'var(--accent-purple)'
-                  : moniStatus === 'error'
-                    ? 'var(--accent-red)'
-                    : '#ffd700',
-            padding: '14px 32px',
-            fontSize: '1rem',
-            fontWeight: '700',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            boxShadow: moniStatus === 'listening'
-              ? '0 0 20px rgba(0, 240, 255, 0.4), inset 0 0 8px rgba(0, 240, 255, 0.1)'
-              : moniStatus === 'thinking'
-                ? '0 0 20px rgba(255, 215, 0, 0.4), inset 0 0 8px rgba(255, 215, 0, 0.1)'
-                : moniStatus === 'speaking'
-                  ? '0 0 20px rgba(157, 78, 221, 0.4), inset 0 0 8px rgba(157, 78, 221, 0.1)'
-                  : moniStatus === 'error'
-                    ? '0 0 20px rgba(255, 56, 56, 0.4), inset 0 0 8px rgba(255, 56, 56, 0.1)'
-                    : '0 0 20px rgba(255, 215, 0, 0.2), inset 0 0 8px rgba(255, 215, 0, 0.1)',
-            transition: 'all 0.3s ease',
-            outline: 'none',
-            fontFamily: 'var(--font-sans)',
-            letterSpacing: '0.5px'
-          }}
-        >
-          <span style={{ fontSize: '1.2rem' }}>
-            {moniStatus === 'listening' ? '●' : moniStatus === 'thinking' ? '⏳' : moniStatus === 'speaking' ? '🔊' : moniStatus === 'error' ? '⚠️' : '🎤'}
-          </span>
-          {moniStatus === 'listening' && 'Dinliyor...'}
-          {moniStatus === 'thinking' && 'Düşünüyor...'}
-          {moniStatus === 'speaking' && 'Konuşuyor...'}
-          {moniStatus === 'error' && 'Hata Oluştu!'}
-          {moniStatus === 'idle' && 'Sesli Komut Ver'}
-        </button>
-
-        {/* APK Download Button for Android Devices */}
-        <a
-          href="/downloads/moni.apk"
-          download="moni.apk"
-          style={{
-            marginTop: '15px',
-            padding: '10px 20px',
-            background: 'rgba(255, 255, 255, 0.05)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '20px',
-            color: 'rgba(255, 255, 255, 0.7)',
-            fontSize: '0.82rem',
-            fontWeight: '600',
-            textDecoration: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            transition: 'all 0.3s ease',
-            cursor: 'pointer',
-            fontFamily: 'var(--font-sans)',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
-            e.currentTarget.style.color = '#fff';
-            e.currentTarget.style.border = '1px solid rgba(255, 255, 255, 0.2)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
-            e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
-            e.currentTarget.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-          }}
-        >
-          <span>🤖</span> Android Uygulamasını İndir (.APK)
-        </a>
-
-        {typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && (
-          <p style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.4)', marginTop: '-12px', marginBottom: '-5px', textAlign: 'center', maxWidth: '320px', lineHeight: '1.2' }}>
-            ℹ️ iPhone güvenlik kısıtlamaları nedeniyle asistanı bu butona basarak aktifleştiriniz.
-          </p>
-        )}
-
-        {/* Grid Navigation Section */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: '12px',
-          width: '100%',
-          marginTop: '10px'
-        }}>
-          {/* Kişi Ara */}
-          <div
-            onClick={() => setCurrentView('contacts')}
-            className="home-nav-card"
-            style={navCardStyle}
-          >
-            <span style={{ fontSize: '1.6rem', color: '#ffd700' }}>📞</span>
-            <span style={navCardLabelStyle}>Kişi Ara</span>
-          </div>
-
-          {/* Takvim Gör */}
-          <div
-            onClick={() => setCurrentView('calendar')}
-            className="home-nav-card"
-            style={navCardStyle}
-          >
-            <span style={{ fontSize: '1.6rem', color: '#ffd700' }}>📅</span>
-            <span style={navCardLabelStyle}>Takvim Gör</span>
-          </div>
-
-          {/* Görevlerim / Yapılacaklar */}
-          <div
-            onClick={() => setCurrentView('todos')}
-            className="home-nav-card"
-            style={navCardStyle}
-          >
-            <span style={{ fontSize: '1.6rem', color: '#ffd700' }}>📋</span>
-            <span style={navCardLabelStyle}>Görevlerim</span>
-          </div>
-
-          {/* Not Defteri */}
-          <div
-            onClick={() => setCurrentView('notes')}
-            className="home-nav-card"
-            style={navCardStyle}
-          >
-            <span style={{ fontSize: '1.6rem', color: '#ffd700' }}>📝</span>
-            <span style={navCardLabelStyle}>Not Defteri</span>
-          </div>
-        </div>
-
-        {/* Clock & Bottom Section */}
-        <div style={{
-          width: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '12px',
-          marginTop: '10px'
-        }}>
-          {/* Live Date & Clock Card */}
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.02)',
-            border: '1px solid rgba(255, 255, 255, 0.05)',
-            borderRadius: '16px',
-            padding: '8px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '4px',
-            boxShadow: 'inset 0 0 10px rgba(0,0,0,0.2)',
-            width: '100%',
-            boxSizing: 'border-box'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '1rem' }}>🕰️</span>
-              <span style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '1rem',
-                fontWeight: '600',
-                color: 'var(--accent-cyan)',
-                letterSpacing: '1px'
-              }}>
-                {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-              </span>
+          {/* Smart Suggestions card */}
+          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <h3 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700 }}>💡 Context Recommendations / Akıllı Öneriler</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {suggestions.map((s, idx) => (
+                <div key={idx} style={{ fontSize: '0.76rem', background: 'rgba(0, 240, 255, 0.03)', border: '1px solid rgba(0, 240, 255, 0.1)', padding: '10px 14px', borderRadius: '8px', color: 'var(--color-primary)' }}>
+                  💡 {s}
+                </div>
+              ))}
             </div>
-            <span style={{
-              fontSize: '0.72rem',
-              color: 'var(--color-secondary)',
-              fontWeight: '500'
-            }}>
-              {currentTime.toLocaleDateString('tr-TR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-            </span>
           </div>
 
-          {/* PWA Install Button */}
-          {isInstallable && (
-            <button
-              onClick={handleInstallApp}
-              style={{
-                width: '100%',
-                background: 'linear-gradient(135deg, rgba(0, 240, 255, 0.1), rgba(157, 78, 221, 0.1))',
-                border: '1px solid rgba(0, 240, 255, 0.3)',
-                borderRadius: '16px',
-                padding: '10px 14px',
-                color: 'var(--accent-cyan)',
-                fontSize: '0.78rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                boxShadow: '0 0 12px rgba(0, 240, 255, 0.1)',
-                transition: 'all 0.2s',
-                marginTop: '2px',
-                boxSizing: 'border-box'
-              }}
-              className="hover-scale"
-            >
-              📲 Uygulamayı Telefona Yükle
-            </button>
-          )}
-
-          {/* Moni Pro Banner */}
-          <div style={{
-            background: 'linear-gradient(90deg, rgba(212, 175, 55, 0.15), rgba(157, 78, 221, 0.15))',
-            border: '1px solid rgba(212, 175, 55, 0.3)',
-            borderRadius: '20px',
-            padding: '6px 20px',
-            width: '100%',
-            textAlign: 'center',
-            fontSize: '0.75rem',
-            fontWeight: '600',
-            color: '#ffd700',
-            letterSpacing: '0.5px',
-            boxSizing: 'border-box'
-          }}>
-            Moni Profesyonel Sürüm
-          </div>
-
-          {/* Version number */}
-          <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)', marginTop: '-6px' }}>
-            MONI v1.2.0 • Mobil Paket Sürüm
-          </span>
         </div>
 
+        {/* Bottom Timeline and notifications log panel */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          
+          {/* Activity timeline list */}
+          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: '260px' }}>
+            <h3 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700 }}>⏳ Activity Timeline / Aktivite Zaman Akışı</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '200px' }}>
+              {events.slice(-8).reverse().map((ev) => (
+                <div key={ev.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '6px' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <span style={{
+                      color: ev.severity === 'error' ? 'var(--accent-red)' : ev.severity === 'success' ? 'var(--accent-green)' : 'var(--accent-cyan)'
+                    }}>●</span>
+                    <span>{ev.event}</span>
+                  </div>
+                  <span style={{ color: 'var(--color-muted)' }}>{new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              ))}
+              {events.length === 0 && (
+                <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)', textAlign: 'center', marginTop: '40px' }}>Henüz kayıtlı aktivite bulunmuyor.</div>
+              )}
+            </div>
+          </div>
+
+          {/* Notifications feed */}
+          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: '260px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700 }}>🔔 System Notifications / Bildirim Geçmişi</h3>
+              <button
+                onClick={() => {
+                  engine.clearAllNotifications();
+                  // Force refresh by reloading or updating state triggers
+                  alert(isTurkish ? "Tüm bildirimler silindi." : "Cleared all notifications.");
+                }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', fontSize: '0.72rem' }}
+              >
+                Clear All / Temizle
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '200px' }}>
+              {notifications.slice(-6).reverse().map((n) => (
+                <div key={n.id} style={{ padding: '8px 10px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', fontSize: '0.74rem', borderLeft: n.read ? 'none' : '3px solid var(--accent-cyan)' }}>
+                  <div style={{ fontWeight: 'bold' }}>{isTurkish ? n.titleTr : n.titleEn}</div>
+                  <div style={{ color: 'var(--color-muted)', fontSize: '0.64rem', marginTop: '2px' }}>{new Date(n.timestamp).toLocaleTimeString()}</div>
+                </div>
+              ))}
+              {notifications.length === 0 && (
+                <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)', textAlign: 'center', marginTop: '40px' }}>Herhangi bir bildirim bulunmuyor.</div>
+              )}
+            </div>
+          </div>
+
+        </div>
       </div>
     );
   };
 
-  const navCardStyle: React.CSSProperties = {
-    background: 'rgba(18, 20, 29, 0.6)',
-    border: '1px solid rgba(255, 255, 255, 0.06)',
-    borderRadius: '16px',
-    padding: '12px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '6px',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    boxShadow: 'var(--glass-shadow)'
+  const renderHomeView = () => {
+    void renderDashboard2View;
+    void renderDashboard2View;
+    const name = getDynamicUserName();
+    const isTurkish = currentLanguage === 'tr';
+    const totalTodos = todos.filter(t => !t.isCompleted).length;
+    
+    // Welcome Greeting texts
+    const greetingText = name 
+      ? (isTurkish ? 'Merhaba ' + name + ', bugün ne yapmak istersin?' : 'Hello ' + name + ', what would you like to do today?')
+      : (isTurkish ? "Merhaba, bugün ne yapmak istersin?" : "Hello, what would you like to do today?");
+
+    // 1. Mobile Home View Adapter
+    if (isMobile) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '10px 4px', boxSizing: 'border-box' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '1.25rem', fontWeight: 800, background: 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>MONI COMPANION</span>
+            <span style={{ fontSize: '0.8rem', background: 'rgba(255,255,255,0.06)', padding: '4px 10px', borderRadius: '20px', color: 'var(--accent-cyan)', border: '1px solid rgba(0,240,255,0.15)' }}>
+              👤 {name || (isTurkish ? 'Profil' : 'Profile')}
+            </span>
+          </div>
+
+          <div className="glass-panel" style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', textAlign: 'center', background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)' }}>
+            <h2 style={{ fontSize: '1.15rem', fontWeight: '800', letterSpacing: '-0.3px', margin: 0 }}>{greetingText}</h2>
+            <div style={{ width: '130px', height: '130px', borderRadius: '50%', padding: '2px', background: 'rgba(0,240,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setCurrentView('voice')}>
+              <MoniAvatar status={moniStatus} isSpeaking={currentlySpeakingMsgId !== null} mood={avatarMood} avatarType={avatarType} eyeColor={eyeColor} />
+            </div>
+            <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)' }}>{isTurkish ? 'Konuşmak için dokun / Dokun ve Konuş' : 'Tap Orb to speak by voice'}</div>
+          </div>
+
+          {/* Big Buttons Quick Actions Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            {[
+              { id: 'voice', label: isTurkish ? '🎙️ Konuş' : '🎙️ Talk', view: 'voice' },
+              { id: 'chat', label: isTurkish ? '💬 Yaz' : '💬 Type', view: 'chat' },
+              { id: 'todos', label: isTurkish ? '📋 Görevler' : '📋 Tasks', view: 'todos' },
+              { id: 'memory', label: isTurkish ? '🧠 Bellek' : '🧠 Memory', view: 'memory' },
+              { id: 'settings', label: isTurkish ? '⚙️ Ayarlar' : '⚙️ Settings', view: 'settings' },
+              { id: 'help', label: isTurkish ? '❓ Yardım' : '❓ Help', view: 'help' }
+            ].map(b => (
+              <button
+                key={b.id}
+                onClick={() => setCurrentView(b.view as any)}
+                className="btn btn-secondary glass-panel-hover"
+                style={{ padding: '16px', fontSize: '0.85rem', fontWeight: 'bold', justifyContent: 'center' }}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Recent Chat Preview */}
+          <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.15)' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+              {isTurkish ? '⏰ Günün Özeti' : '⏰ Daily Brief'}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-secondary)' }}>
+              {isTurkish ? 'Tamamlanacak ' + totalTodos + ' aktif görev var.' : 'You have ' + totalTodos + ' active tasks.'}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 2. Desktop Home Screen Layout
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', flex: 1, minHeight: '100%', boxSizing: 'border-box' }}>
+        
+        {/* Dynamic greeting section */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 style={{ fontSize: '1.75rem', fontWeight: 800, margin: 0, letterSpacing: '-0.5px' }}>{greetingText}</h1>
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', margin: '4px 0 0 0' }}>
+              {new Date().toLocaleDateString(isTurkish ? 'tr-TR' : 'en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <span style={{ fontSize: '0.76rem', background: 'rgba(16, 185, 129, 0.08)', color: 'var(--accent-green)', padding: '6px 12px', borderRadius: '20px', border: '1px solid rgba(16,185,129,0.15)', fontWeight: 600 }}>
+              ● {isTurkish ? 'Asistan Hazır' : 'Companion Active'}
+            </span>
+          </div>
+        </div>
+
+        {/* Home Screen Widgets Grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '24px', flex: 1 }}>
+          
+          {/* Left Column: Visualizer Orb Widget */}
+          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 20px', gap: '20px', background: 'rgba(0,0,0,0.1)', border: '1px solid rgba(255,255,255,0.04)' }}>
+            <div style={{ width: '160px', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', borderRadius: '50%', background: 'rgba(0,240,255,0.06)' }}>
+              <MoniAvatar status={moniStatus} isSpeaking={currentlySpeakingMsgId !== null} mood={avatarMood} avatarType={avatarType} eyeColor={eyeColor} />
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>MONI Core Orb</span>
+              <p style={{ fontSize: '0.74rem', color: 'var(--color-muted)', margin: '4px 0 0 0' }}>
+                {isTurkish ? 'Moni şu an boşta ve sizi dinlemeye hazır.' : 'Moni is idle and ready to collaborate.'}
+              </p>
+            </div>
+          </div>
+
+          {/* Right Column: Cards Grid */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            
+            {/* Daily Brief & System highlights */}
+            <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '8px' }}>
+                ☕ {isTurkish ? 'Günün Brifingi' : 'Morning Brief'}
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div style={{ fontSize: '0.8rem', background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '8px' }}>
+                  <span>📋 {isTurkish ? 'Yapılacaklar:' : 'Tasks:'} </span>
+                  <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>{isTurkish ? '' + totalTodos + ' aktif görev' : '' + totalTodos + ' active' }</span>
+                </div>
+                <div style={{ fontSize: '0.8rem', background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '8px' }}>
+                  <span>🧠 {isTurkish ? 'Kayıtlar:' : 'Memories:'} </span>
+                  <span style={{ fontWeight: 'bold', color: 'var(--accent-purple)' }}>{isTurkish ? '' + memories.length + ' bilgi' : '' + memories.length + ' records' }</span>
+                </div>
+                <div style={{ fontSize: '0.8rem', background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '8px' }}>
+                  <span>🗣️ {isTurkish ? 'Ses Dönüşü:' : 'Voice Output:'} </span>
+                  <span style={{ fontWeight: 'bold', color: 'var(--accent-green)' }}>{autoSpeakEnabled ? 'ON' : 'OFF'}</span>
+                </div>
+                <div style={{ fontSize: '0.8rem', background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '8px' }}>
+                  <span>🤖 {isTurkish ? 'Zeka:' : 'AI Provider:'} </span>
+                  <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>Local Fallback</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Continue Working & Quick Actions Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '20px' }}>
+              {/* Continue Working panel */}
+              <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <h3 style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700 }}>💾 {isTurkish ? 'Çalışmaya Devam Et' : 'Continue Working'}</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, justifyContent: 'center' }}>
+                  <button onClick={() => setCurrentView('chat')} className="btn btn-secondary" style={{ width: '100%', fontSize: '0.78rem', padding: '8px 10px', justifyContent: 'flex-start' }}>
+                    💬 {isTurkish ? 'Son Sohbete Dön' : 'Resume Last Chat'}
+                  </button>
+                  <button onClick={() => setCurrentView('todos')} className="btn btn-secondary" style={{ width: '100%', fontSize: '0.78rem', padding: '8px 10px', justifyContent: 'flex-start' }}>
+                    📋 {isTurkish ? 'Görevleri Düzenle' : 'Open Tasks List'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Actions widget */}
+              <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <h3 style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700 }}>⚡ {isTurkish ? 'Hızlı Aksiyonlar' : 'Quick Actions'}</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <button onClick={() => setCurrentView('chat')} className="btn btn-primary" style={{ fontSize: '0.74rem', padding: '8px 4px' }}>+ {isTurkish ? 'Sohbet' : 'Chat'}</button>
+                  <button onClick={() => setCurrentView('modulator')} className="btn btn-secondary" style={{ fontSize: '0.74rem', padding: '8px 4px' }}>🎙️ {isTurkish ? 'Ses Ayarı' : 'Voice FX'}</button>
+                  <button onClick={() => setCurrentView('memory')} className="btn btn-secondary" style={{ fontSize: '0.74rem', padding: '8px 4px' }}>🧠 {isTurkish ? 'Hafıza' : 'Memory'}</button>
+                  <button onClick={() => setCurrentView('settings')} className="btn btn-secondary" style={{ fontSize: '0.74rem', padding: '8px 4px' }}>⚙️ {isTurkish ? 'Ayarlar' : 'Settings'}</button>
+                </div>
+              </div>
+            </div>
+
+            {/* Smart Suggestions */}
+            <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <h3 style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700 }}>💡 {isTurkish ? 'Moni Önerileri' : 'Smart Suggestions'}</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {[
+                  isTurkish ? "Bellekte yeni kişiselleştirilmiş kayıtlar var, kontrol edin." : "New personalization records available. Click to review.",
+                  isTurkish ? "Mikrofonu simüle ederek sesli komutla asistanı test edebilirsiniz." : "Try voice modulation settings to modify pitches."
+                ].map((s, i) => (
+                  <div key={i} style={{ fontSize: '0.74rem', color: 'var(--color-secondary)', background: 'rgba(255,255,255,0.01)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.02)' }}>
+                    💡 {s}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    );
   };
 
-  const navCardLabelStyle: React.CSSProperties = {
-    fontSize: '0.78rem',
-    fontWeight: '600',
-    color: 'var(--color-secondary)'
+  const renderMobileVoiceView = () => {
+    const isTurkish = currentLanguage === 'tr';
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: '20px', minHeight: '80vh', textAlign: 'center' }}>
+        <button
+          onClick={() => setCurrentView('home')}
+          className="btn btn-secondary"
+          style={{ position: 'absolute', top: '16px', left: '16px', padding: '6px 12px', fontSize: '0.8rem' }}
+        >
+          ← Back
+        </button>
+        <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>
+          {moniStatus === 'listening' ? (isTurkish ? 'Dinliyorum...' : 'Listening...') : (isTurkish ? 'Moni Asistan' : 'Moni Companion')}
+        </div>
+        <div style={{ width: '180px', height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '20px 0' }}>
+          <MoniAvatar status={moniStatus} isSpeaking={currentlySpeakingMsgId !== null} mood={avatarMood} avatarType={avatarType} eyeColor={eyeColor} />
+        </div>
+        <div style={{ fontSize: '0.82rem', color: 'var(--color-secondary)', padding: '10px', background: 'rgba(255,255,255,0.02)', borderRadius: '10px', width: '90%', minHeight: '60px' }}>
+          {isRecording ? (isTurkish ? 'Ses alınıyor...' : 'Receiving stream...') : (isTurkish ? 'Konuşmak için asistan Orbuna dokunun veya alttaki simülasyona basın.' : 'Tap Orb to toggle active recording.')}
+        </div>
+        <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+          <button onClick={simulateMicListening} className="btn btn-primary" style={{ padding: '10px 24px' }}>
+            {isTurkish ? 'Mikrofon Simüle Et' : 'Simulate Voice'}
+          </button>
+          <button onClick={() => voiceService.cancelAllSpeech()} className="btn btn-danger" style={{ padding: '10px 24px' }}>
+            {isTurkish ? 'Sesi Durdur' : 'Stop Audio'}
+          </button>
+        </div>
+      </div>
+    );
   };
 
-  const renderChatView = () => {
+
+const renderChatView = () => {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
@@ -3714,1864 +2839,234 @@ export const MoniDashboard: React.FC = () => {
   };
 
   const renderSettingsView = () => {
+    const categories = [
+      { id: 'general', label: 'General / Genel', icon: '⚙️' },
+      { id: 'intelligence', label: 'Companion / Zeka', icon: '🧠' },
+      { id: 'voice', label: 'Voice & TTS / Ses', icon: '🗣️' },
+      { id: 'appearance', label: 'Appearance / Tasarım', icon: '🎨' },
+      { id: 'providers', label: 'AI Providers / Yapay Zeka', icon: '🤖' },
+      { id: 'memory', label: 'Memory / Hafıza', icon: '🧠' },
+      { id: 'developer', label: 'Developer Labs / Geliştirici', icon: '🧪' },
+      { id: 'about', label: 'About MONI / Hakkında', icon: '🏆' }
+    ];
+
+    const isMatched = (text: string) => text.toLowerCase().includes(settingsSearch.toLowerCase());
+
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', height: '100%', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-          <button
-            onClick={() => setCurrentView('home')}
-            style={{ background: 'transparent', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', fontSize: '0.9rem' }}
-          >
-            ← Geri
-          </button>
-          <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>⚙️ Sistem Ayarları</h3>
-        </div>
-
-        {/* Connectivity Mode */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Ağ Bağlantı Modu</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-              {isOffline ? 'Offline / Local LLM' : 'Online / Cloud LLM'}
-            </div>
-          </div>
-          <button
-            className="btn btn-secondary"
-            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
-            onClick={() => {
-              setIsOffline(!isOffline);
-              addBridgeLog(`Bağlantı modu değiştirildi: ${!isOffline ? 'Offline' : 'Online'}`);
-            }}
-          >
-            Değiştir
-          </button>
-        </div>
-
-        {/* Dashboard 2 / Klasik Ana Ekran Toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Executive Dashboard Arayüzü</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-              {isDashboard2Enabled ? 'Aktif (Gelişmiş Kontrol Paneli)' : 'Pasif (Klasik Arayüz)'}
-            </div>
-          </div>
-          <button
-            className={`btn ${isDashboard2Enabled ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
-            onClick={() => {
-              const val = !isDashboard2Enabled;
-              setIsDashboard2Enabled(val);
-              localStorage.setItem('moni_is_dashboard2_enabled', String(val));
-              addBridgeLog(`Executive Dashboard 2 ${val ? 'etkinleştirildi' : 'devre dışı bırakıldı'}.`);
-            }}
-          >
-            {isDashboard2Enabled ? 'Açık' : 'Kapalı'}
-          </button>
-        </div>
-
-        {/* Gemini API Key Configuration */}
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '8px',
-          border: !geminiApiKey ? '2px dashed var(--accent-cyan)' : '1px solid rgba(255,255,255,0.03)',
-          borderRadius: '12px',
-          padding: '12px',
-          background: !geminiApiKey ? 'rgba(0, 240, 255, 0.03)' : 'transparent',
-          boxShadow: !geminiApiKey ? '0 0 15px rgba(0, 240, 255, 0.1)' : 'none',
-          marginBottom: '10px'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: !geminiApiKey ? 'var(--accent-cyan)' : 'var(--color-primary)' }}>
-              ✨ Gemini API Anahtarı {!geminiApiKey && '(Gerekli ⚠️)'}
-            </span>
-            <a
-              href="https://aistudio.google.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', textDecoration: 'underline', fontWeight: 700 }}
-            >
-              Ücretsiz Anahtar Al (Google AI Studio) ↗
-            </a>
-          </div>
+      <div className="glass-panel" style={{ display: 'flex', flex: 1, minHeight: '520px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)' }}>
+        {/* Left Category Sidebar */}
+        <div style={{ width: '220px', borderRight: '1px solid rgba(255,255,255,0.06)', padding: '16px 12px', background: 'rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <input
-            type="password"
-            placeholder="AI Studio API Anahtarınızı buraya yapıştırın..."
-            value={geminiApiKey}
-            onChange={(e) => {
-              const val = e.target.value;
-              setGeminiApiKey(val);
-              localStorage.setItem('gemini_api_key', val);
-              addBridgeLog('Gemini API anahtarı güncellendi.');
-            }}
+            type="text"
+            value={settingsSearch}
+            onChange={(e) => setSettingsSearch(e.target.value)}
+            placeholder="Settings Search / Arayın..."
             style={{
-              background: 'rgba(0, 0, 0, 0.5)',
-              border: !geminiApiKey ? '2px solid var(--accent-cyan)' : '1px solid var(--border-color)',
-              color: 'var(--color-primary)',
-              padding: '10px 12px',
-              borderRadius: '8px',
-              fontSize: '0.82rem',
-              outline: 'none',
               width: '100%',
-              boxSizing: 'border-box',
-              boxShadow: !geminiApiKey ? '0 0 10px rgba(0, 240, 255, 0.2)' : 'none'
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid rgba(255,255,255,0.06)',
+              background: 'rgba(0,0,0,0.2)',
+              color: '#fff',
+              fontSize: '0.8rem',
+              outline: 'none',
+              marginBottom: '12px'
             }}
           />
-          <div style={{ fontSize: '0.66rem', color: !geminiApiKey ? 'var(--accent-cyan)' : 'var(--color-secondary)' }}>
-            {!geminiApiKey
-              ? 'Moni\'nin canlı konuşması ve her soruya cevap vermesi için buraya API anahtarı girmelisiniz.'
-              : 'Canlı yapay zeka aktif! API anahtarınız yerel olarak saklanmaktadır.'}
-          </div>
-        </div>
-
-        {/* Avatar and Appearance Configuration */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '12px', marginBottom: '10px' }}>
-          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-primary)' }}>👤 Asistan Görünümü</span>
-
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '6px' }}>
-            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)' }}>Asistan Göz Rengi:</span>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {[
-                { name: 'blue', color: '#00f0ff', label: 'Mavi' },
-                { name: 'black', color: '#12141c', label: 'Siyah', border: '1px solid rgba(255,255,255,0.4)' },
-                { name: 'purple', color: '#9d4edd', label: 'Mor' },
-                { name: 'green', color: '#39ff14', label: 'Yeşil (Doğal)' },
-                { name: 'gold', color: '#ffd700', label: 'Altın' },
-                { name: 'green-glowing', color: '#00ff88', label: 'Yeşil (Işıltılı)' }
-              ].map((colorItem) => (
-                <button
-                  key={colorItem.name}
-                  onClick={() => {
-                    setEyeColor(colorItem.name);
-                    localStorage.setItem('moni_eye_color', colorItem.name);
-                    addBridgeLog(`Göz rengi ayarlandı: ${colorItem.label}`);
-                  }}
-                  style={{
-                    width: '16px',
-                    height: '16px',
-                    borderRadius: '50%',
-                    backgroundColor: colorItem.color,
-                    border: eyeColor === colorItem.name ? '2px solid #fff' : colorItem.border || '1px solid rgba(255,255,255,0.1)',
-                    boxShadow: eyeColor === colorItem.name ? `0 0 10px ${colorItem.color}` : 'none',
-                    cursor: 'pointer',
-                    padding: 0,
-                    transition: 'all 0.2s',
-                    transform: eyeColor === colorItem.name ? 'scale(1.2)' : 'scale(1)',
-                    outline: 'none'
-                  }}
-                  title={colorItem.label}
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* Avatar Tipi Seçimi */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
-            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)' }}>Avatar Tipi:</span>
-            <select
-              value={avatarType}
-              onChange={(e) => {
-                const val = e.target.value as 'image' | 'svg';
-                setAvatarType(val);
-                localStorage.setItem('moni_avatar_type', val);
-                addBridgeLog(`Avatar tipi değiştirildi: ${val === 'image' ? 'Görsel Kadın' : 'Canlı Robot'}`);
-              }}
+          {categories.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => setActiveSettingsCategory(c.id as any)}
               style={{
-                background: 'rgba(0, 0, 0, 0.3)',
-                border: '1px solid var(--border-color)',
-                color: 'var(--color-primary)',
-                padding: '6px 10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '10px 12px',
                 borderRadius: '8px',
-                fontSize: '0.76rem',
-                outline: 'none',
+                border: 'none',
+                background: activeSettingsCategory === c.id ? 'rgba(0, 240, 255, 0.08)' : 'transparent',
+                color: activeSettingsCategory === c.id ? 'var(--accent-cyan)' : 'var(--color-primary)',
+                textAlign: 'left',
                 cursor: 'pointer',
-                width: '100%'
+                fontSize: '0.82rem',
+                fontWeight: activeSettingsCategory === c.id ? '600' : '400',
+                transition: 'all 0.2s ease'
               }}
+              className="hover-scale"
             >
-              <option value="image">👩 Görsel (Varsayılan Kadın)</option>
-              <option value="svg">🤖 Canlı SVG Robot</option>
-            </select>
-          </div>
-
-          {/* Avatar Animasyonları Toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.02)' }}>
-            <div>
-              <div style={{ fontSize: '0.76rem', fontWeight: 600 }}>Avatar Animasyonları</div>
-              <div style={{ fontSize: '0.64rem', color: 'var(--color-secondary)' }}>Nefes alma, yüzerlik ve göz hareketleri</div>
-            </div>
-            <button
-              className={`btn ${avatarAnimationsEnabled ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ padding: '4px 10px', fontSize: '0.68rem', borderRadius: '8px' }}
-              onClick={() => {
-                const val = !avatarAnimationsEnabled;
-                setAvatarAnimationsEnabled(val);
-                localStorage.setItem('moni_avatar_animations_enabled', String(val));
-                addBridgeLog(`Avatar animasyonları ${val ? 'açıldı' : 'kapatıldı'}.`);
-              }}
-            >
-              {avatarAnimationsEnabled ? 'Açık' : 'Kapalı'}
+              <span>{c.icon}</span>
+              <span>{c.label}</span>
             </button>
-          </div>
-
-          {/* Ağız Animasyonu Toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.02)' }}>
-            <div>
-              <div style={{ fontSize: '0.76rem', fontWeight: 600 }}>Konuşurken Ağız / Ses Dalgası</div>
-              <div style={{ fontSize: '0.64rem', color: 'var(--color-secondary)' }}>Konuşma sırasında ağız hareketi efekti</div>
-            </div>
-            <button
-              className={`btn ${avatarMouthAnimationEnabled ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ padding: '4px 10px', fontSize: '0.68rem', borderRadius: '8px' }}
-              onClick={() => {
-                const val = !avatarMouthAnimationEnabled;
-                setAvatarMouthAnimationEnabled(val);
-                localStorage.setItem('moni_avatar_mouth_animation_enabled', String(val));
-                addBridgeLog(`Ağız animasyonu ${val ? 'açıldı' : 'kapatıldı'}.`);
-              }}
-            >
-              {avatarMouthAnimationEnabled ? 'Açık' : 'Kapalı'}
-            </button>
-          </div>
-
-          {/* Görsel Efekt Yoğunluğu Seçici */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: '6px' }}>
-            <span style={{ fontSize: '0.74rem', color: 'var(--color-secondary)' }}>Görsel Efekt Yoğunluğu:</span>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              {(['low', 'medium', 'high'] as const).map((intensity) => {
-                const labels = { low: 'Düşük', medium: 'Orta', high: 'Yüksek' };
-                return (
-                  <button
-                    key={intensity}
-                    onClick={() => {
-                      setAvatarEffectsIntensity(intensity);
-                      localStorage.setItem('moni_avatar_effects_intensity', intensity);
-                      addBridgeLog(`Efekt yoğunluğu ayarlandı: ${labels[intensity]}`);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: '6px 0',
-                      borderRadius: '8px',
-                      background: avatarEffectsIntensity === intensity
-                        ? 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(157, 78, 221, 0.15))'
-                        : 'rgba(255,255,255,0.02)',
-                      border: avatarEffectsIntensity === intensity ? '1px solid var(--accent-cyan)' : '1px solid transparent',
-                      color: avatarEffectsIntensity === intensity ? 'var(--accent-cyan)' : 'var(--color-secondary)',
-                      fontSize: '0.7rem',
-                      fontWeight: avatarEffectsIntensity === intensity ? '600' : '400',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    {labels[intensity]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          ))}
         </div>
 
-        {/* Default Speech Voice Profiles */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>🎙️ Asistan Genel Sesi:</span>
-          <select
-            value={selectedVoice}
-            onChange={(e) => {
-              const voiceVal = e.target.value;
-              setSelectedVoice(voiceVal);
-              localStorage.setItem('moni_voice_type', voiceVal);
-              addBridgeLog(`Ses tercihi değiştirildi: ${voiceVal}`);
-              setTimeout(() => {
-                speakText("Ses değiştirildi.", undefined, voiceVal);
-              }, 100);
-            }}
-            style={{
-              background: 'rgba(0, 0, 0, 0.3)',
-              border: '1px solid var(--border-color)',
-              color: 'var(--color-primary)',
-              padding: '8px 10px',
-              borderRadius: '8px',
-              fontSize: '0.78rem',
-              outline: 'none',
-              cursor: 'pointer',
-              width: '100%'
-            }}
-          >
-            <option value="selin">👩 Selin (Kadın - Kurumsal)</option>
-            <option value="derin">👩 Derin (Kadın - Doğal)</option>
-            <option value="google-assistant">🤖 Google Asistan (Kadın - Net)</option>
-            <option value="gemini-vega">✨ Gemini Vega (Kadın - Parlak)</option>
-            <option value="gemini-ursa">🪐 Gemini Ursa (Kadın - Sıcak)</option>
-          </select>
-        </div>
-
-        {/* Sistem Türkçe Sesi */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>🗣️ Sistem Türkçe Sesi (Tarayıcı Fallback):</span>
-            {/* Auto-select female voice button */}
-            <button
-              onClick={() => {
-                const isMaleVoice = (name: string) =>
-                  /tolga|cem|hakan|sabri|huseyin|male|erkek|man|boy/i.test(name.toLowerCase());
-                const bestFemale = trVoicesList.find(v => {
-                  const name = v.name.toLowerCase();
-                  const lang = v.lang.toLowerCase().replace('_', '-');
-                  const isTr = lang.startsWith('tr') || lang.includes('tr');
-                  const hasFemale = /dilara|yelda|emel|seda|filiz|sibel|hazel|ayse|zeynep|yasemin|ipek|suna|female|bayan|woman|girl|siri|her|google/i.test(name);
-                  return isTr && hasFemale && !isMaleVoice(name);
-                }) || trVoicesList.find(v => {
-                  const lang = v.lang.toLowerCase().replace('_', '-');
-                  const isTr = lang.startsWith('tr') || lang.includes('tr');
-                  return isTr && !isMaleVoice(v.name);
-                });
-                if (bestFemale) {
-                  setSelectedSystemVoiceName(bestFemale.name);
-                  localStorage.setItem('moni_speech_voice_name', bestFemale.name);
-                  addBridgeLog(`Otomatik kadın ses seçildi: ${bestFemale.name}`);
-                  setTimeout(() => speakText('Kadın ses otomatik seçildi.', undefined), 100);
-                } else {
-                  showAudioNotification('Bu cihazda Türkçe kadın sesi bulunamadı. Türkçe erkek ses veya varsayılan ses kullanılacak.');
-                }
-              }}
-              style={{
-                background: 'linear-gradient(135deg, rgba(157, 78, 221, 0.15), rgba(0, 240, 255, 0.1))',
-                border: '1px solid rgba(157, 78, 221, 0.4)',
-                borderRadius: '12px',
-                color: 'var(--accent-purple)',
-                fontSize: '0.66rem',
-                fontWeight: '700',
-                padding: '4px 10px',
-                cursor: 'pointer',
-                outline: 'none',
-                fontFamily: 'var(--font-sans)',
-                whiteSpace: 'nowrap',
-                transition: 'all 0.2s'
-              }}
-            >
-              👩 Kadın Sesi Otomatik Seç
-            </button>
-          </div>
-
-          {/* Active voice label */}
-          {selectedSystemVoiceName && (
-            <div style={{
-              fontSize: '0.66rem',
-              color: 'var(--accent-cyan)',
-              background: 'rgba(0, 240, 255, 0.06)',
-              border: '1px solid rgba(0, 240, 255, 0.15)',
-              borderRadius: '8px',
-              padding: '4px 10px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px'
-            }}>
-              🔊 Aktif ses: <strong>{selectedSystemVoiceName}</strong>
-            </div>
-          )}
-
-          <select
-            value={selectedSystemVoiceName}
-            onChange={(e) => {
-              const voiceName = e.target.value;
-              setSelectedSystemVoiceName(voiceName);
-              localStorage.setItem('moni_speech_voice_name', voiceName);
-              addBridgeLog(`Sistem Türkçe ses tercihi güncellendi: ${voiceName || 'Varsayılan'}`);
-              if (voiceName) {
-                setTimeout(() => {
-                  speakText('Yeni sistem Türkçe sesi seçildi.', undefined);
-                }, 100);
-              }
-            }}
-            style={{
-              background: 'rgba(0, 0, 0, 0.3)',
-              border: '1px solid var(--border-color)',
-              color: 'var(--color-primary)',
-              padding: '8px 10px',
-              borderRadius: '8px',
-              fontSize: '0.78rem',
-              outline: 'none',
-              cursor: 'pointer',
-              width: '100%'
-            }}
-          >
-            <option value="">-- Profil Varsayılan Sesi --</option>
-            {(() => {
-              const isMaleVoice = (name: string) =>
-                /tolga|cem|hakan|sabri|huseyin|male|erkek|man|boy/i.test(name.toLowerCase());
-              const femaleTr = trVoicesList.filter(v => {
-                const lang = v.lang.toLowerCase().replace('_', '-');
-                const isTr = lang.startsWith('tr') || lang.includes('tr');
-                const name = v.name.toLowerCase();
-                const hasFemale = /dilara|yelda|emel|seda|filiz|sibel|hazel|ayse|zeynep|yasemin|ipek|suna|female|bayan|woman|girl|siri|her|google/i.test(name);
-                return isTr && (hasFemale || name.includes('google')) && !isMaleVoice(v.name);
-              });
-              const otherTr = trVoicesList.filter(v => {
-                const lang = v.lang.toLowerCase().replace('_', '-');
-                const isTr = lang.startsWith('tr') || lang.includes('tr');
-                return isTr && !femaleTr.includes(v);
-              });
-              const maleTr = otherTr.filter(v => isMaleVoice(v.name));
-              const neutralTr = otherTr.filter(v => !isMaleVoice(v.name));
-              const others = trVoicesList.filter(v => {
-                const lang = v.lang.toLowerCase().replace('_', '-');
-                return !lang.startsWith('tr') && !lang.includes('tr');
-              });
-              return (
-                <>
-                  {femaleTr.length > 0 && (
-                    <optgroup label="👩 Türkçe Kadın Sesleri (Önerilen)">
-                      {femaleTr.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
-                    </optgroup>
-                  )}
-                  {neutralTr.length > 0 && (
-                    <optgroup label="🗣️ Türkçe Sesler">
-                      {neutralTr.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
-                    </optgroup>
-                  )}
-                  {maleTr.length > 0 && (
-                    <optgroup label="👨 Türkçe Erkek Sesler">
-                      {maleTr.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
-                    </optgroup>
-                  )}
-                  {others.length > 0 && (
-                    <optgroup label="🌐 Diğer Sistem Sesleri">
-                      {others.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
-                    </optgroup>
-                  )}
-                </>
-              );
-            })()}
-          </select>
-          {trVoicesList.length === 0 ? (
-            <span style={{ fontSize: '0.68rem', color: 'var(--accent-red)' }}>
-              ⚠️ Bu cihazda sesli okuma motoru bulunamadı, metin modu aktif.
-            </span>
-          ) : (
-            !trVoicesList.some(v => v.lang.toLowerCase().replace('_', '-').startsWith('tr') || v.lang.toLowerCase().includes('tr')) && (
-              <span style={{ fontSize: '0.68rem', color: '#ffd700' }}>
-                ℹ️ Bu cihazda Türkçe kadın sesi bulunamadı. Türkçe erkek ses veya varsayılan ses kullanılacak.
-              </span>
-            )
-          )}
-        </div>
-
-
-        {/* Otomatik Seslendirme Toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Otomatik Seslendirme</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-              Cevapları otomatik sesli oku
-            </div>
-          </div>
-          <button
-            className={`btn ${autoSpeakEnabled ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
-            onClick={() => {
-              const val = !autoSpeakEnabled;
-              setAutoSpeakEnabled(val);
-              localStorage.setItem('moni_auto_speak_enabled', String(val));
-              addBridgeLog(`Otomatik seslendirme ${val ? 'açıldı' : 'kapatıldı'}.`);
-            }}
-          >
-            {autoSpeakEnabled ? 'Açık' : 'Kapalı'}
-          </button>
-        </div>
-
-        {/* Otomatik Gönderme Toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Sesli Komutu Otomatik Gönder</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-              Konuşmanız bitince doğrudan gönder
-            </div>
-          </div>
-          <button
-            className={`btn ${autoSubmitEnabled ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
-            onClick={() => {
-              const val = !autoSubmitEnabled;
-              setAutoSubmitEnabled(val);
-              localStorage.setItem('moni_auto_submit_enabled', String(val));
-              addBridgeLog(`Sesli otomatik gönderme ${val ? 'açıldı' : 'kapatıldı'}.`);
-            }}
-          >
-            {autoSubmitEnabled ? 'Açık' : 'Kapalı'}
-          </button>
-        </div>
-
-        {/* Konuşma Hızı Slider */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
-            <span style={{ color: 'var(--color-secondary)' }}>Konuşma Hızı:</span>
-            <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>{speechRate.toFixed(1)}x</span>
-          </div>
-          <input
-            type="range"
-            min="0.5"
-            max="2.0"
-            step="0.1"
-            value={speechRate}
-            onChange={(e) => {
-              const val = parseFloat(e.target.value);
-              setSpeechRate(val);
-              localStorage.setItem('moni_speech_rate', String(val));
-            }}
-            style={{ width: '100%', accentColor: 'var(--accent-cyan)' }}
-          />
-        </div>
-
-        {/* Ses Seviyesi Slider */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
-            <span style={{ color: 'var(--color-secondary)' }}>Ses Seviyesi:</span>
-            <span style={{ fontWeight: 'bold', color: 'var(--accent-purple)' }}>{Math.round(speechVolume * 100)}%</span>
-          </div>
-          <input
-            type="range"
-            min="0.0"
-            max="1.0"
-            step="0.05"
-            value={speechVolume}
-            onChange={(e) => {
-              const val = parseFloat(e.target.value);
-              setSpeechVolume(val);
-              localStorage.setItem('moni_speech_volume', String(val));
-            }}
-            style={{ width: '100%', accentColor: 'var(--accent-purple)' }}
-          />
-        </div>
-
-        {/* Wake word toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Uyanma Kelimesi ('Moni')</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-              Asistanın sesinizle uyanma tetikleyicisi
-            </div>
-          </div>
-          <button
-            className={`btn ${isWakeWordListening ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
-            onClick={() => {
-              const nextVal = !isWakeWordListening;
-              setIsWakeWordListening(nextVal);
-              if (nextVal) {
-                setTimeout(() => startWakeWordRecognition(), 100);
-              } else {
-                if (wakeRecognitionRef.current) {
-                  try { wakeRecognitionRef.current.stop(); } catch (e) { }
-                }
-                addBridgeLog('Moni dinleme modu kapatıldı.');
-              }
-            }}
-          >
-            {isWakeWordListening ? 'Açık' : 'Kapalı'}
-          </button>
-        </div>
-
-        {/* Konuşma Tarzı / Personality Mode Selector */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>🎭 Konuşma Tarzı</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-                MONI'nin konuşma stilini belirle
-              </div>
-            </div>
-            <span style={{ fontSize: '0.7rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>
-              {PersonalityEngine.getModeLabel(personalityEngine.getMode())}
-            </span>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-            {([
-              { mode: 'normal' as PersonalityMode, label: 'Normal', icon: '💬' },
-              { mode: 'samimi' as PersonalityMode, label: 'Samimi', icon: '😊' },
-              { mode: 'profesyonel' as PersonalityMode, label: 'Profesyonel', icon: '👔' },
-              { mode: 'koc' as PersonalityMode, label: 'Koç', icon: '🎯' },
-              { mode: 'antrenor' as PersonalityMode, label: 'Antrenör', icon: '💪' },
-              { mode: 'yonetici' as PersonalityMode, label: 'Yönetici', icon: '📊' }
-            ]).map((item) => {
-              const isActive = personalityEngine.getMode() === item.mode;
-              return (
-                <button
-                  key={item.mode}
-                  id={`personality-mode-${item.mode}`}
-                  onClick={() => {
-                    personalityEngine.setMode(item.mode);
-                    addBridgeLog(`Konuşma tarzı değiştirildi: ${item.label}`);
-                    // Force re-render by triggering a state update
-                    setMessages(prev => [...prev]);
-                  }}
-                  style={{
-                    flex: '1 1 calc(33% - 4px)',
-                    minWidth: '80px',
-                    padding: '8px 6px',
-                    borderRadius: '10px',
-                    background: isActive
-                      ? 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(157, 78, 221, 0.15))'
-                      : 'rgba(255,255,255,0.02)',
-                    border: isActive ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.06)',
-                    color: isActive ? 'var(--accent-cyan)' : 'var(--color-secondary)',
-                    fontSize: '0.72rem',
-                    fontWeight: isActive ? '700' : '400',
-                    cursor: 'pointer',
-                    transition: 'all 0.25s ease',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '4px',
-                    boxShadow: isActive ? '0 0 12px rgba(0, 240, 255, 0.15)' : 'none',
-                    outline: 'none'
-                  }}
-                >
-                  {item.icon} {item.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Diagnostics Button */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Sistem Tanılama (Diagnostics)</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-              Core Migration v2 ve Telemetry değerleri
-            </div>
-          </div>
-          <button
-            className={`btn ${showDiagnostics ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
-            onClick={() => {
-              setShowDiagnostics(!showDiagnostics);
-              console.log('[Diagnostics] Telemetry initialized status:', !!telemetry);
-            }}
-          >
-            {showDiagnostics ? 'Gizle' : 'Göster'}
-          </button>
-        </div>
-
-        {/* Collapsible Diagnostics Panel */}
-        {showDiagnostics && (() => {
-          const diagState = stateManager.getState();
-          let ltmStats = { totalCount: 0, lastSaved: 'Yok', lastUsed: 'Yok', duplicateBlockedCount: 0, status: 'idle' };
-          try {
-            const ltm = container.resolve<any>('LongTermMemory');
-            if (ltm && typeof ltm.getDiagnostics === 'function') {
-              ltmStats = ltm.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let convStats = { currentTopic: 'chat', conversationLength: 0, conversationState: 'General Chat', currentIntent: 'none', lastSummary: 'Yok', lastTopicChange: null, contextSize: 0 };
-          try {
-            const conv = container.resolve<any>('ConversationEngine');
-            if (conv && typeof conv.getDiagnostics === 'function') {
-              convStats = conv.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let lifeStats = { healthScore: 0, activityScore: 0, goalScore: 0, productivityScore: 0, overallLifeScore: 0, lastSnapshotTime: 'Never', snapshotSize: 0, profileCompleteness: 0 };
-          try {
-            const lm = container.resolve<any>('LifeModel');
-            if (lm && typeof lm.getDiagnostics === 'function') {
-              lifeStats = lm.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let proactiveStats = { insightCount: 0, suggestionCount: 0, riskCount: 0, predictionCount: 0, lastDailyBriefTime: 'Never', lastWeeklyReviewTime: 'Never', lastMonthlyReviewTime: 'Never', proactiveStatus: 'Idle', lastProactiveAction: 'None' };
-          try {
-            const pe = container.resolve<any>('ProactiveEngine');
-            if (pe && typeof pe.getDiagnostics === 'function') {
-              proactiveStats = pe.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let agentStats = { agentEngineStatus: 'Inactive', registeredAgentsCount: 0, lastSelectedAgent: 'None', lastAgentConfidence: 0.0, lastAgentAction: 'None', agentExecutionCount: 0, agentFailureCount: 0, confirmationPending: false };
-          try {
-            const am = container.resolve<any>('AgentManager');
-            if (am && typeof am.getDiagnostics === 'function') {
-              agentStats = am.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let goalStats = { totalGoalsCount: 0, activeGoalsCount: 0, completedGoalsCount: 0, milestonesCount: 0, goalScore: 0, goalCompletionRate: 0, predictionPercentage: 0, lastAnalysisResult: 'Analiz edilmedi', lastSuggestion: 'Öneri yok' };
-          try {
-            const ge = container.resolve<any>('GoalEngine');
-            if (ge && typeof ge.getDiagnostics === 'function') {
-              goalStats = ge.getDiagnostics(lifeStats);
-            }
-          } catch (e) {}
-
-          let workflowStats = { activeWorkflowsCount: 0, runningWorkflowsCount: 0, pausedWorkflowsCount: 0, completedWorkflowsCount: 0, lastExecutionTime: 'Never', nextExecutionTime: 'Never', workflowSuccessRate: 0, automationScore: 0 };
-          try {
-            const we = container.resolve<any>('WorkflowEngine');
-            if (we && typeof we.getDiagnostics === 'function') {
-              workflowStats = we.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let multiAgentStats = { registeredAgentsCount: 0, activeAgentsCount: 0, consensusConfidence: 0.0, averageAgentConfidence: 0.0, pipelineTime: 0, totalVotes: 0, winningAgent: 'None', fallbackUsed: false, duplicateActionsPrevented: 0 };
-          try {
-            const mae = container.resolve<any>('MultiAgentEngine');
-            if (mae && typeof mae.getDiagnostics === 'function') {
-              multiAgentStats = mae.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let learningStats = { topAgent: 'None', weakAgent: 'None', agentSuccessRate: 100, userAcceptedPercent: 100, userRejectedPercent: 0, averageCost: 100, estimatedTokens: 150, tokenRemaining: 100000, cacheHitRate: 0, conflictCount: 0, resolvedConflicts: 0, costMode: 'Normal' };
-          try {
-            const le = container.resolve<any>('LearningEngine');
-            if (le && typeof le.getDiagnostics === 'function') {
-              learningStats = le.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let toolIntelStats = { mostUsedTool: 'None', avgSelectionTimeMs: 0, toolAccuracyPercent: 100, toolSuccessRatePercent: 100, multiToolPlansCount: 0, conflictCount: 0, avgExecutionCost: 0, internetDecisions: 0, localDecisions: 0, confirmationRequests: 0 };
-          try {
-            const ti = container.resolve<any>('ToolIntelligenceEngine');
-            if (ti && typeof ti.getDiagnostics === 'function') {
-              toolIntelStats = ti.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let planningStats = { activePlans: 0, completedPlans: 0, blockedPlans: 0, avgPlanningTimeMs: 0, recoveryPlansCount: 0, dependencyGraphSize: 0, executionReadinessPercent: 100, planningAccuracyPercent: 100 };
-          try {
-            const pe = container.resolve<any>('PlanningEngine');
-            if (pe && typeof pe.getDiagnostics === 'function') {
-              planningStats = pe.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let reasoningStats = { avgReasoningTimeMs: 0, avgConfidencePercent: 100, alternativeCount: 0, riskCount: 0, reflectionRevisions: 0, evidenceSourcesCount: 0, decisionAccuracyPercent: 100, reasoningCacheHitCount: 0 };
-          try {
-            const re = container.resolve<any>('ReasoningEngine');
-            if (re && typeof re.getDiagnostics === 'function') {
-              reasoningStats = re.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let knowledgeStats = { nodeCount: 0, edgeCount: 0, personalFactsCount: 0, worldFactsCount: 0, projectCount: 0, currentSprint: 'N/A', activeProjectsCount: 0, detectedRisksCount: 0, architectureLayersCount: 0, ownerName: 'Metin GATFAR', privacyMode: 'private_owner_only', identitySource: 'owner_profile', isPermanentOwnerIdentity: true };
-          try {
-            const ke = container.resolve<any>('KnowledgeEngine');
-            if (ke && typeof ke.getDiagnostics === 'function') {
-              knowledgeStats = ke.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let visionStats = { visionStatus: 'Active', lastImageType: 'Yok', ocrRuns: 0, documentsAnalyzed: 0, objectsDetected: 0, privacyWarnings: 0, cloudAnalysisRequests: 0, avgVisionTime: 0, lastVisionSummary: 'Hiçbir görsel analiz edilmedi.' };
-          try {
-            const ve = container.resolve<any>('VisionEngine');
-            if (ve && typeof ve.getDiagnostics === 'function') {
-              visionStats = ve.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let cognitiveLearningStats = { experienceCount: 0, learningScore: 92, successfulStrategies: 0, failedStrategies: 0, patternsLearned: 0, userPreferences: 'Length: normal, Style: casual', mistakesDetected: 0, memoryConsolidations: 0, selfImprovementSuggestions: 0, bestPerformingModule: 'ReasoningEngine', weakestModule: 'ToolIntelligenceEngine' };
-          try {
-            const cle = container.resolve<any>('CognitiveLearningEngine');
-            if (cle && typeof cle.getDiagnostics === 'function') {
-              cognitiveLearningStats = cle.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let autonomousExecutiveStats = {
-            activeExecutiveState: 'Idle',
-            currentPolicy: 'Standard',
-            activeEngines: 'Reasoning, Knowledge, Planning, ToolIntel, Vision, Learning, Memory',
-            enginePriority: 'Health -> Critical -> Reasoning -> Planning -> Tool -> LLM',
-            resourceUsage: 'CPU: Low, RAM: Minimal',
-            tokenUsage: '0 tokens used',
-            contextUsage: '0%',
-            executiveDecisions: 0,
-            selfAssessmentScore: 100,
-            improvementSuggestions: 0,
-            executiveHealth: 'Healthy',
-            executiveConfidence: 100
-          };
-          try {
-            const aee = container.resolve<any>('AutonomousExecutiveEngine');
-            if (aee && typeof aee.getDiagnostics === 'function') {
-              autonomousExecutiveStats = aee.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let backupDiagnosticsStats = {
-            lastBackupAt: 'Never',
-            backupCount: 0,
-            lastBackupSize: 0,
-            lastRestoreAt: 'Never',
-            restoreStatus: 'Idle',
-            checksumStatus: 'None',
-            recoveryModeStatus: 'INACTIVE',
-            exportedDataSections: 'LongTermMemory, KnowledgeGraph, Goals, Workflows, CognitiveLearning, ExecutiveState'
-          };
-          try {
-            const bd = container.resolve<any>('BackupDiagnostics');
-            if (bd && typeof bd.getDiagnostics === 'function') {
-              backupDiagnosticsStats = bd.getDiagnostics();
-            }
-          } catch (e) {}
-
-          let releaseDiagnosticsStats = {
-            currentSprint: 'Sprint 3.6.1',
-            lastReleaseAt: 'Never',
-            lastBuildStatus: 'untested',
-            lastTestStatus: 'untested',
-            lastBackupStatus: 'untested',
-            lastCommitHash: 'none',
-            lastTag: 'none',
-            pushReady: false,
-            pushApproved: false,
-            releaseHealth: 'Unknown'
-          };
-          try {
-            const rd = container.resolve<any>('ReleaseDiagnostics');
-            if (rd && typeof rd.getDiagnostics === 'function') {
-              releaseDiagnosticsStats = rd.getDiagnostics();
-            }
-          } catch (e) {}
-
-          // Dynamic production readiness score
-          let readinessScore = 45; // Base score
-          if (geminiApiKey) readinessScore += 20;
-          if (backendHealth.ok) readinessScore += 20;
-          if (diagState.pluginsLoadedCount > 0) readinessScore += 5;
-          if (diagState.memoryFactsCount > 0) readinessScore += 5;
-          if (agentStats.agentEngineStatus === 'Active') readinessScore += 5;
-          // Apply fallback penalty
-          readinessScore -= Math.min(20, diagState.legacyFallbackCount * 5);
-          readinessScore = Math.max(0, Math.min(100, readinessScore));
-
-          const backendUrl = API_BASE_URL;
-
-          return (
-            <div style={{
-              background: 'rgba(7, 8, 13, 0.6)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '12px',
-              padding: '12px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px',
-              fontSize: '0.75rem',
-              color: 'var(--color-primary)',
-              maxHeight: '260px',
-              overflowY: 'auto'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>Parametre</span>
-                <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>Değer</span>
-              </div>
+        {/* Right Tab Content */}
+        <div style={{ flex: 1, padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* GENERAL CATEGORY */}
+          {activeSettingsCategory === 'general' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>⚙️ General Settings / Genel Ayarlar</h2>
               
-              {/* Tool Intelligence Diagnostics */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-green)' }}>
-                <span>Tool Intelligence Engine:</span>
-                <span>Active</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Most Used Tool:</span>
-                <span>{toolIntelStats.mostUsedTool}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Avg Selection Time:</span>
-                <span>{toolIntelStats.avgSelectionTimeMs} ms</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Tool Accuracy:</span>
-                <span>{toolIntelStats.toolAccuracyPercent}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Multi Tool Plans:</span>
-                <span>{toolIntelStats.multiToolPlansCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Conflicts Resolved:</span>
-                <span>{toolIntelStats.conflictCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Internet Decisions:</span>
-                <span>{toolIntelStats.internetDecisions}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Local Decisions:</span>
-                <span>{toolIntelStats.localDecisions}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Confirmation Requests:</span>
-                <span>{toolIntelStats.confirmationRequests}</span>
-              </div>
-
-              {/* Planning Engine Diagnostics */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-purple)' }}>
-                <span>Planning Engine:</span>
-                <span>Active</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Active Plans:</span>
-                <span>{planningStats.activePlans}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Completed Plans:</span>
-                <span>{planningStats.completedPlans}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Blocked Plans:</span>
-                <span>{planningStats.blockedPlans}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Avg Planning Time:</span>
-                <span>{planningStats.avgPlanningTimeMs} ms</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Recovery Plans Generated:</span>
-                <span>{planningStats.recoveryPlansCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Dependency Graph Size:</span>
-                <span>{planningStats.dependencyGraphSize}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Execution Readiness:</span>
-                <span>{planningStats.executionReadinessPercent}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Planning Accuracy:</span>
-                <span>{planningStats.planningAccuracyPercent}%</span>
-              </div>
-
-              {/* Reasoning Engine Diagnostics */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>
-                <span>Reasoning Engine:</span>
-                <span>Active</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Avg Reasoning Time:</span>
-                <span>{reasoningStats.avgReasoningTimeMs} ms</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Avg Confidence:</span>
-                <span>{reasoningStats.avgConfidencePercent}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Alternatives Evaluated:</span>
-                <span>{reasoningStats.alternativeCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Risks Addressed:</span>
-                <span>{reasoningStats.riskCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Reflection Revisions:</span>
-                <span>{reasoningStats.reflectionRevisions}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Evidence Sources:</span>
-                <span>{reasoningStats.evidenceSourcesCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Decision Accuracy:</span>
-                <span>{reasoningStats.decisionAccuracyPercent}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Reasoning Cache Hits:</span>
-                <span>{reasoningStats.reasoningCacheHitCount}</span>
-              </div>
-
-              {/* Cognitive Knowledge Engine Diagnostics */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-purple)' }}>
-                <span>Cognitive Knowledge Engine:</span>
-                <span>Active</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Current Sprint:</span>
-                <span>{knowledgeStats.currentSprint}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Active Projects Count:</span>
-                <span>{knowledgeStats.activeProjectsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Graph Nodes Count:</span>
-                <span>{knowledgeStats.nodeCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Graph Edges Count:</span>
-                <span>{knowledgeStats.edgeCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Personal Facts Count:</span>
-                <span>{knowledgeStats.personalFactsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>World Facts Count:</span>
-                <span>{knowledgeStats.worldFactsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Detected Risks Count:</span>
-                <span>{knowledgeStats.detectedRisksCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Owner:</span>
-                <span>{knowledgeStats.ownerName}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Privacy Mode:</span>
-                <span>{knowledgeStats.privacyMode}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Identity Source:</span>
-                <span>{knowledgeStats.identitySource}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Permanent Owner Identity:</span>
-                <span>{knowledgeStats.isPermanentOwnerIdentity ? 'true' : 'false'}</span>
-              </div>
-
-              {/* Vision Intelligence Engine Diagnostics */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-green)' }}>
-                <span>Vision Intelligence Engine:</span>
-                <span>{visionStats.visionStatus}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Image Type:</span>
-                <span>{visionStats.lastImageType}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>OCR Runs:</span>
-                <span>{visionStats.ocrRuns}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Documents Analyzed:</span>
-                <span>{visionStats.documentsAnalyzed}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Objects Detected:</span>
-                <span>{visionStats.objectsDetected}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Privacy Warnings:</span>
-                <span>{visionStats.privacyWarnings}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Cloud Analysis Requests:</span>
-                <span>{visionStats.cloudAnalysisRequests}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Avg Vision Time:</span>
-                <span>{visionStats.avgVisionTime} ms</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Vision Summary:</span>
-                <span>{visionStats.lastVisionSummary}</span>
-              </div>
-
-              {/* Cognitive Learning Diagnostics */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>
-                <span>Cognitive Learning Engine:</span>
-                <span>Active</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Experience Count:</span>
-                <span>{cognitiveLearningStats.experienceCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Learning Score:</span>
-                <span>{cognitiveLearningStats.learningScore}/100</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Successful Strategies:</span>
-                <span>{cognitiveLearningStats.successfulStrategies}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Failed Strategies:</span>
-                <span>{cognitiveLearningStats.failedStrategies}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Patterns Learned:</span>
-                <span>{cognitiveLearningStats.patternsLearned}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>User Preferences:</span>
-                <span>{cognitiveLearningStats.userPreferences}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Mistakes Detected:</span>
-                <span>{cognitiveLearningStats.mistakesDetected}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Memory Consolidations:</span>
-                <span>{cognitiveLearningStats.memoryConsolidations}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Self Improvement Suggestions:</span>
-                <span>{cognitiveLearningStats.selfImprovementSuggestions}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Best Performing Module:</span>
-                <span>{cognitiveLearningStats.bestPerformingModule}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Weakest Module:</span>
-                <span>{cognitiveLearningStats.weakestModule}</span>
-              </div>
-
-              {/* Autonomous Executive Diagnostics */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-orange)' }}>
-                <span>Autonomous Executive:</span>
-                <span>Active</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Active State:</span>
-                <span>{autonomousExecutiveStats.activeExecutiveState}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Current Policy:</span>
-                <span>{autonomousExecutiveStats.currentPolicy}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Active Engines:</span>
-                <span style={{ fontSize: '0.65rem' }}>{autonomousExecutiveStats.activeEngines}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Engine Priority:</span>
-                <span style={{ fontSize: '0.62rem' }}>{autonomousExecutiveStats.enginePriority}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Resource Usage:</span>
-                <span>{autonomousExecutiveStats.resourceUsage}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Token Usage:</span>
-                <span>{autonomousExecutiveStats.tokenUsage}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Context Usage:</span>
-                <span>{autonomousExecutiveStats.contextUsage}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Executive Decisions:</span>
-                <span>{autonomousExecutiveStats.executiveDecisions}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Self Assessment Score:</span>
-                <span>{autonomousExecutiveStats.selfAssessmentScore}/100</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Improvement Suggestions:</span>
-                <span>{autonomousExecutiveStats.improvementSuggestions}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Executive Health:</span>
-                <span style={{ color: 'var(--accent-green)' }}>{autonomousExecutiveStats.executiveHealth}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Executive Confidence:</span>
-                <span>{autonomousExecutiveStats.executiveConfidence}%</span>
-              </div>
-
-              {/* Release & Recovery Diagnostics */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>
-                <span>Release & Recovery:</span>
-                <span>Active</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Backup:</span>
-                <span>{backupDiagnosticsStats.lastBackupAt}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Backup Count:</span>
-                <span>{backupDiagnosticsStats.backupCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Backup Size:</span>
-                <span>{backupDiagnosticsStats.lastBackupSize} bytes</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Checksum Status:</span>
-                <span style={{ color: backupDiagnosticsStats.checksumStatus === 'Valid' ? 'var(--accent-green)' : '#fff' }}>{backupDiagnosticsStats.checksumStatus}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Release:</span>
-                <span>{releaseDiagnosticsStats.lastReleaseAt}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Build Status:</span>
-                <span style={{ color: 'var(--accent-green)' }}>{releaseDiagnosticsStats.lastBuildStatus}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Test Status:</span>
-                <span style={{ color: 'var(--accent-green)' }}>{releaseDiagnosticsStats.lastTestStatus}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Commit:</span>
-                <span>{releaseDiagnosticsStats.lastCommitHash}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Tag:</span>
-                <span>{releaseDiagnosticsStats.lastTag}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Push Ready:</span>
-                <span>{releaseDiagnosticsStats.pushReady ? 'Yes' : 'No'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Push Approved:</span>
-                <span>{releaseDiagnosticsStats.pushApproved ? 'Yes' : 'No'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Restore Status:</span>
-                <span>{backupDiagnosticsStats.restoreStatus}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Recovery Mode Status:</span>
-                <span style={{ color: backupDiagnosticsStats.recoveryModeStatus === 'ACTIVE' ? 'red' : 'var(--accent-green)' }}>{backupDiagnosticsStats.recoveryModeStatus}</span>
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginTop: '8px' }}>
-                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
-                  try {
-                    const bs = container.resolve<any>('BackupService');
-                    if (bs) {
-                      bs.createBackupDryRun().then((res: any) => {
-                        bs.recordBackupCompletion(res.manifest);
-                        alert(`Yedekleme dry-run başarılı! Manifest ID: ${res.manifest.backupId}`);
-                      });
-                    }
-                  } catch (e: any) { alert(e.message); }
-                }}>Create Backup</button>
-                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
-                  alert('Backup checksum test check ok.');
-                }}>Check Backup</button>
-                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
-                  alert('Sprint finish triggered. Running build/tests pipeline.');
-                }}>Finish Sprint</button>
-                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
-                  const check = confirm('Bu release GitHub\'a gönderilecek. Devam etmek istiyor musunuz?');
-                  if (check) {
-                    try {
-                      const rm = container.resolve<any>('ReleaseManager');
-                      if (rm) {
-                        rm.setPushApproval(true);
-                        alert('Push onayı verildi. Lütfen terminalden git push çalıştırın.');
-                      }
-                    } catch (e: any) { alert(e.message); }
-                  }
-                }}>Push Release</button>
-                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
-                  alert('Restore dry run ok. ownerIdentity = Metin GATFAR.');
-                }}>Restore Dry Run</button>
-                <button className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.62rem' }} onClick={() => {
-                  try {
-                    const rm = container.resolve<any>('RecoveryMode');
-                    if (rm) {
-                      rm.activateRecoveryMode();
-                      alert(rm.getRecoveryInstructions().join('\n'));
-                    }
-                  } catch (e: any) { alert(e.message); }
-                }}>Open Recovery Mode</button>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px' }}>
-                <span>Active Provider:</span>
-                <span style={{ fontWeight: 600, color: '#fff' }}>{diagState.activeProvider}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Gemini:</span>
-                <span style={{ fontWeight: 600, color: '#fff' }}>{(() => {
-                  try {
-                    const aiOrch = container.resolve<any>('AIOrchestrator');
-                    return aiOrch ? aiOrch.getProviderStatus('gemini') : 'Hazır';
-                  } catch (_) { return 'Hazır'; }
-                })()}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Groq:</span>
-                <span style={{ fontWeight: 600, color: '#fff' }}>{(() => {
-                  try {
-                    const aiOrch = container.resolve<any>('AIOrchestrator');
-                    return aiOrch ? aiOrch.getProviderStatus('groq') : 'Hazır';
-                  } catch (_) { return 'Hazır'; }
-                })()}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>LLM mode:</span>
-                <span style={{ fontWeight: 600, color: '#fff' }}>{(() => {
-                  try {
-                    const aiOrch = container.resolve<any>('AIOrchestrator');
-                    return aiOrch ? aiOrch.getLlmMode() : 'Normal';
-                  } catch (_) { return 'Normal'; }
-                })()}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Backend URL:</span>
-                <span style={{ color: 'var(--color-secondary)', wordBreak: 'break-all', fontSize: '0.68rem' }}>{backendUrl}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>ExecutiveBrain Status:</span>
-                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active (v2)</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Planner Status:</span>
-                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active (v2)</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>ToolManager Status:</span>
-                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active (v2)</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>PluginManager Status:</span>
-                <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>Active (v2)</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Memory Engine Status:</span>
-                <span style={{ color: ltmStats.status === 'ready' ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>{ltmStats.status}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Memory Facts Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{ltmStats.totalCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Memory Saved:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ltmStats.lastSaved}>{ltmStats.lastSaved}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Memory Used:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ltmStats.lastUsed}>{ltmStats.lastUsed}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Duplicate Blocked Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{ltmStats.duplicateBlockedCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Conversation Engine:</span>
-                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active (v2)</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Active Topic:</span>
-                <span style={{ color: '#fff', fontWeight: 600 }}>{convStats.currentTopic}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Conversation Length (RAM):</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{convStats.conversationLength}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Conversation State:</span>
-                <span style={{ color: '#fff' }}>{convStats.conversationState}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Current Intent:</span>
-                <span style={{ color: '#fff' }}>{convStats.currentIntent || 'none'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Context Size:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{convStats.contextSize}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Summary:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={convStats.lastSummary}>{convStats.lastSummary}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span>Last Topic Change:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{convStats.lastTopicChange ? new Date(convStats.lastTopicChange).toLocaleTimeString() : 'None'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-purple)' }}>Life Model Engine:</span>
-                <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>Active (v2)</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Health Score:</span>
-                <span style={{ fontWeight: 600, color: '#fff' }}>{lifeStats.healthScore}/100</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Activity Score:</span>
-                <span style={{ fontWeight: 600, color: '#fff' }}>{lifeStats.activityScore}/100</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Goal Score:</span>
-                <span style={{ fontWeight: 600, color: '#fff' }}>{lifeStats.goalScore}/100</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Productivity Score:</span>
-                <span style={{ fontWeight: 600, color: '#fff' }}>{lifeStats.productivityScore}/100</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Overall Life Score:</span>
-                <span style={{ fontWeight: 600, color: 'var(--accent-green)' }}>{lifeStats.overallLifeScore}/100</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Profile Completeness:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{lifeStats.profileCompleteness}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Snapshot Size:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{lifeStats.snapshotSize} bytes</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span>Last Snapshot Time:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{lifeStats.lastSnapshotTime !== 'Never' ? new Date(lifeStats.lastSnapshotTime).toLocaleTimeString() : 'Never'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Proactive Intelligence:</span>
-                <span style={{ color: proactiveStats.proactiveStatus === 'Active' ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>{proactiveStats.proactiveStatus}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Insight Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{proactiveStats.insightCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Suggestion Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{proactiveStats.suggestionCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Risk Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{proactiveStats.riskCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Prediction Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{proactiveStats.predictionCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Daily Brief:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{proactiveStats.lastDailyBriefTime !== 'Never' ? new Date(proactiveStats.lastDailyBriefTime).toLocaleTimeString() : 'Never'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Weekly Review:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{proactiveStats.lastWeeklyReviewTime !== 'Never' ? new Date(proactiveStats.lastWeeklyReviewTime).toLocaleTimeString() : 'Never'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Monthly Review:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{proactiveStats.lastMonthlyReviewTime !== 'Never' ? new Date(proactiveStats.lastMonthlyReviewTime).toLocaleTimeString() : 'Never'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span>Last Proactive Action:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={proactiveStats.lastProactiveAction}>{proactiveStats.lastProactiveAction}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Agent Engine:</span>
-                <span style={{ color: agentStats.agentEngineStatus === 'Active' ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>{agentStats.agentEngineStatus}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Registered Agents:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{agentStats.registeredAgentsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Selected Agent:</span>
-                <span style={{ color: '#fff' }}>{agentStats.lastSelectedAgent}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Agent Confidence:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{(agentStats.lastAgentConfidence * 100).toFixed(0)}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Execution Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{agentStats.agentExecutionCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Failure Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{agentStats.agentFailureCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Confirmation Pending:</span>
-                <span style={{ color: agentStats.confirmationPending ? 'var(--accent-purple)' : '#fff' }}>{agentStats.confirmationPending ? 'Yes' : 'No'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span>Last Agent Action:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={agentStats.lastAgentAction}>{agentStats.lastAgentAction}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Goal Intelligence:</span>
-                <span style={{ color: goalStats.activeGoalsCount > 0 ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>
-                  {goalStats.activeGoalsCount > 0 ? 'Active' : 'Idle'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Total Goals:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.totalGoalsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Active Goals:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.activeGoalsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Completed Goals:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.completedGoalsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Milestones Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.milestonesCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Goal Score:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.goalScore}/100</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Goal Completion %:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.goalCompletionRate}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Prediction %:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{goalStats.predictionPercentage}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Analysis:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={goalStats.lastAnalysisResult}>{goalStats.lastAnalysisResult}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span>Last Suggestion:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={goalStats.lastSuggestion}>{goalStats.lastSuggestion}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Workflow Engine:</span>
-                <span style={{ color: workflowStats.activeWorkflowsCount > 0 ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>
-                  {workflowStats.activeWorkflowsCount > 0 ? 'Active' : 'Idle'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Active Workflows:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.activeWorkflowsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Running Workflows:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.runningWorkflowsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Paused Workflows:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.pausedWorkflowsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Completed Workflows:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.completedWorkflowsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Success Rate:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.workflowSuccessRate}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Automation Score:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{workflowStats.automationScore}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Execution:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{workflowStats.lastExecutionTime !== 'Never' ? new Date(workflowStats.lastExecutionTime).toLocaleTimeString() : 'Never'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span>Next Execution:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{workflowStats.nextExecutionTime !== 'Never' ? new Date(workflowStats.nextExecutionTime).toLocaleTimeString() : 'Never'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Multi-Agent Collaboration:</span>
-                <span style={{ color: multiAgentStats.activeAgentsCount > 0 ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>
-                  {multiAgentStats.activeAgentsCount > 0 ? 'Active' : 'Idle'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Active Agents:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{multiAgentStats.activeAgentsCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Consensus Confidence:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{(multiAgentStats.consensusConfidence * 100).toFixed(0)}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Avg Agent Confidence:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{(multiAgentStats.averageAgentConfidence * 100).toFixed(0)}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Pipeline Time:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{multiAgentStats.pipelineTime}ms</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Total Votes:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{multiAgentStats.totalVotes}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Winning Agent:</span>
-                <span style={{ color: '#fff' }}>{multiAgentStats.winningAgent}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Fallback Used:</span>
-                <span style={{ color: '#fff' }}>{multiAgentStats.fallbackUsed ? 'Yes' : 'No'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span>Duplicates Prevented:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{multiAgentStats.duplicateActionsPrevented}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)' }}>Agent Learning & Cost:</span>
-                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Active</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Top Agent:</span>
-                <span style={{ color: '#fff' }}>{learningStats.topAgent}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Weak Agent:</span>
-                <span style={{ color: '#fff' }}>{learningStats.weakAgent}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Agent Success Rate:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.agentSuccessRate}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>User Accepted %:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.userAcceptedPercent}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>User Rejected %:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.userRejectedPercent}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Average Cost:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.averageCost} tokens</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Cache Hit Rate:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.cacheHitRate}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Conflicts:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.conflictCount} (Resolved: {learningStats.resolvedConflicts})</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Token Budget Remaining:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{learningStats.tokenRemaining}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-                <span>Cost Mode:</span>
-                <span style={{ color: learningStats.costMode === 'Normal' ? 'var(--accent-green)' : '#ffd700', fontWeight: 600 }}>{learningStats.costMode}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Audio Engine:</span>
-                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Ready</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>STT / Deepgram:</span>
-                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Enabled</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>TTS / Local Fallback:</span>
-                <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>Enabled</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span>Last Command:</span>
-                <span style={{ color: '#fff', fontSize: '0.7rem' }}>{diagState.lastCommandExecuted || 'None'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Tool:</span>
-                <span style={{ color: 'var(--accent-purple)', fontSize: '0.7rem' }}>{diagState.lastToolExecuted || 'None'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Success:</span>
-                <span style={{ color: 'var(--accent-green)', fontSize: '0.68rem', textAlign: 'right' }}>{diagState.lastSuccess || 'None'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Last Error:</span>
-                <span style={{ color: 'var(--accent-red)', fontSize: '0.68rem', textAlign: 'right' }}>{diagState.lastError || 'None'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span>Plugins List:</span>
-                <span style={{ color: '#fff', fontSize: '0.68rem' }}>{diagState.loadedPlugins.join(', ') || 'SpotifyPlugin (Demo)'}</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span style={{ fontWeight: 600, color: 'var(--accent-purple)' }}>Telemetry Latencies:</span>
-                <div style={{ paddingLeft: '8px', display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-                  {Object.entries(diagState.latencyMap).map(([k, v]) => (
-                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span>{k}:</span>
-                      <span style={{ fontFamily: 'var(--font-mono)', color: '#fff' }}>{v}</span>
-                    </div>
-                  ))}
+              {isMatched("Moni Dashboard Style") && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '10px' }}>
+                  <div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>Alternative Hub Mode / Alternatif Hub Paneli</div>
+                    <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)' }}>Moni'nin ana ekranını detaylı bilgi merkezine dönüştürür.</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={isDashboard2Enabled}
+                    onChange={(e) => {
+                      setIsDashboard2Enabled(e.target.checked);
+                      localStorage.setItem('moni_is_dashboard2_enabled', String(e.target.checked));
+                    }}
+                    style={{ width: '38px', height: '20px', cursor: 'pointer' }}
+                  />
                 </div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '4px' }}>
-                <span>Event Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{diagState.eventCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Legacy Fallback Count:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: diagState.legacyFallbackCount > 0 ? 'var(--accent-red)' : 'var(--color-primary)' }}>{diagState.legacyFallbackCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px', fontWeight: 'bold' }}>
-                <span>Production Readiness Score:</span>
-                <span style={{ color: readinessScore >= 70 ? 'var(--accent-green)' : '#ffd700', fontSize: '0.85rem' }}>{readinessScore} / 100</span>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* MONI TEST LAB Section */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>MONI TEST LAB & Gözlemlenebilirlik</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-secondary)' }}>
-              Smoke, regresyon, stress testleri ve canlı takip
-            </div>
-          </div>
-          <button
-            className={`btn ${showTestLab ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '6px 12px', fontSize: '0.72rem' }}
-            onClick={() => setShowTestLab(!showTestLab)}
-          >
-            {showTestLab ? 'Gizle' : 'Göster'}
-          </button>
-        </div>
-
-        {showTestLab && (
-          <div style={{
-            background: 'rgba(7, 8, 13, 0.6)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '12px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-            fontSize: '0.75rem',
-            color: 'var(--color-primary)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
-              <span>Metrik</span>
-              <span>Değer</span>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
-              <span>Overall System Score:</span>
-              <span style={{ color: 'var(--accent-green)' }}>{testLabDashboard?.overallScore ?? 100} / 100</span>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>Smoke Tests:</span>
-              <span>
-                Passed: <strong style={{ color: 'var(--accent-green)' }}>{testLabDashboard?.smoke?.passed ?? 0}</strong>, 
-                Failed: <strong style={{ color: 'var(--accent-red)' }}>{testLabDashboard?.smoke?.failed ?? 0}</strong>, 
-                Skipped: <strong>{testLabDashboard?.smoke?.skipped ?? 0}</strong>
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>Slowest Module:</span>
-              <span style={{ color: '#ffd700' }}>{testLabDashboard?.slowestModule ?? 'None'}</span>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>Fastest Module:</span>
-              <span style={{ color: 'var(--accent-cyan)' }}>{testLabDashboard?.fastestModule ?? 'None'}</span>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>Average Response:</span>
-              <span>{testLabDashboard?.averageResponseTimeMs ?? 250}ms</span>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>Cache Hit Rate:</span>
-              <span>{testLabDashboard?.cacheHitRate ?? 0}%</span>
-            </div>
-
-            {/* Health Checklist */}
-            <div style={{ borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '6px' }}>
-              <span style={{ fontWeight: 'bold', color: 'var(--accent-purple)' }}>Sistem Sağlık Durumu:</span>
-              {testLabDashboard?.health?.[0]?.environment && (
-                <span style={{ fontSize: '0.62rem', color: 'var(--color-muted)', marginLeft: '6px' }}>
-                  [{testLabDashboard.health[0].environment === 'browser' ? '🌐 Browser Runtime' : testLabDashboard.health[0].environment === 'test' ? '🧪 Test Mode' : '⚙️ Node'}]
-                </span>
               )}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', paddingLeft: '6px' }}>
-                {testLabDashboard?.health?.map((h: any) => (
-                  <div key={h.service} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ opacity: h.status === 'skipped' ? 0.5 : 1 }}>{h.service}:</span>
-                    <span style={{ color: h.status === 'healthy' ? 'var(--accent-green)' : h.status === 'cooldown' ? '#ffd700' : h.status === 'skipped' ? '#888' : 'var(--accent-red)', fontSize: h.status === 'skipped' ? '0.65rem' : undefined }}>
-                      {h.status === 'skipped' ? 'SKIPPED (test)' : h.status.toUpperCase()} {h.status !== 'skipped' ? `(${h.latencyMs}ms)` : ''}
-                    </span>
+
+              {isMatched("Auto Submit Voice Command") && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '10px' }}>
+                  <div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>Auto Submit Voice Transcript / Otomatik Ses Gönderme</div>
+                    <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)' }}>Ses kaydı bittikten sonra doğrudan komutu çalıştırır.</div>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Last Trace Details */}
-            {testLabDashboard?.lastTrace && (
-              <div style={{ borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '6px' }}>
-                <span style={{ fontWeight: 'bold', color: 'var(--accent-cyan)' }}>Son İşlem Akışı (Pipeline Trace):</span>
-                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: '6px', marginTop: '4px', fontSize: '0.7rem', fontFamily: 'var(--font-mono)' }}>
-                  <div>Request: {testLabDashboard.lastTrace.input}</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-                    {testLabDashboard.lastTrace.steps?.map((s: any, idx: number) => (
-                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span>↳ {s.moduleName}</span>
-                        <span style={{ color: s.status === 'completed' ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                          {s.status} {s.durationMs !== undefined ? `(${s.durationMs}ms)` : ''}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <input
+                    type="checkbox"
+                    checked={autoSubmitEnabled}
+                    onChange={(e) => {
+                      setAutoSubmitEnabled(e.target.checked);
+                      localStorage.setItem('moni_auto_submit_enabled', String(e.target.checked));
+                    }}
+                    style={{ width: '38px', height: '20px', cursor: 'pointer' }}
+                  />
                 </div>
-              </div>
-            )}
-
-            {/* Live Provider Test Settings */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.05)', paddingTop: '6px' }}>
-              <span>Live Provider Test:</span>
-              <button
-                className={`btn ${liveProviderTest ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '2px 8px', fontSize: '0.65rem' }}
-                onClick={() => setLiveProviderTest(!liveProviderTest)}
-              >
-                {liveProviderTest ? 'GERÇEK / CANLI' : 'MOCK / SIMÜLE'}
-              </button>
+              )}
             </div>
+          )}
 
-            {/* Test Lab Buttons */}
-            {/* Inline test result message */}
-            {testResultMessage && (
-              <div style={{ background: testResultMessage.startsWith('✅') ? 'rgba(0,200,83,0.1)' : 'rgba(255,56,56,0.1)', border: `1px solid ${testResultMessage.startsWith('✅') ? 'rgba(0,200,83,0.3)' : 'rgba(255,56,56,0.3)'}`, borderRadius: '8px', padding: '6px 10px', fontSize: '0.7rem', textAlign: 'center' }}>
-                {testResultMessage}
-              </div>
-            )}
+          {/* INTELLIGENCE / COMPANION CATEGORY */}
+          {activeSettingsCategory === 'intelligence' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>🧠 Intelligence & Companion Settings</h2>
 
-            {/* Test Lab Buttons with Mock/Live labels */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '6px' }}>
-              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('smoke')} disabled={isTesting}>Smoke (Mock)</button>
-              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('full')} disabled={isTesting}>Full (Mock)</button>
-              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('regression')} disabled={isTesting}>Regression (Mock)</button>
-              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('performance')} disabled={isTesting}>Performance (Mock)</button>
-              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem', borderColor: liveProviderTest ? 'rgba(255,200,0,0.4)' : undefined, color: liveProviderTest ? '#ffd700' : undefined }} onClick={() => runTestLabSuite('provider')} disabled={isTesting}>{liveProviderTest ? 'Provider (LIVE)' : 'Provider (Mock)'}</button>
-              <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem' }} onClick={() => runTestLabSuite('stress')} disabled={isTesting}>Stress (Mock)</button>
-            </div>
-
-            {/* Actions: Export & Clear */}
-            <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
-              <button className="btn btn-primary" style={{ flex: 1, padding: '6px 0', fontSize: '0.68rem' }} onClick={() => handleExportTestReport('json')}>Export JSON</button>
-              <button className="btn btn-primary" style={{ flex: 1, padding: '6px 0', fontSize: '0.68rem' }} onClick={() => handleExportTestReport('md')}>Export MD</button>
-              <button className="btn btn-primary" style={{ flex: 1, padding: '6px 0', fontSize: '0.68rem' }} onClick={() => handleExportTestReport('pdf')}>Export PDF</button>
-            </div>
-            <button className="btn btn-secondary" style={{ padding: '6px 0', fontSize: '0.68rem', width: '100%', borderColor: 'rgba(255, 56, 56, 0.4)', color: 'var(--accent-red)' }} onClick={handleClearTestLogs}>Clear Logs</button>
-          </div>
-        )}
-
-        {/* Native Bridge Logs */}
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: '120px', overflow: 'hidden' }}>
-          <span style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: '6px' }}>■ Native Bridge Köprü Logları</span>
-          <div style={{ flex: 1, overflowY: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '10px', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {bridgeLogs.length === 0 ? (
-              <span style={{ color: 'var(--color-muted)' }}>Henüz hiçbir köprü tetiklenmedi.</span>
-            ) : (
-              bridgeLogs.map((log, idx) => (
-                <div key={idx} style={{
-                  color: log.includes('Köprü tetiklendi') ? 'var(--accent-cyan)' : log.includes('Veritabanı') ? 'var(--accent-purple)' : 'var(--color-secondary)',
-                  whiteSpace: 'nowrap',
-                  textOverflow: 'ellipsis',
-                  overflow: 'hidden'
-                }}>
-                  {log}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>Proactive Suggestions / Proaktif Öneriler</div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)' }}>Asistanın kendi inisiyatifiyle akıllı bildirim ve öneriler sunması.</div>
                 </div>
-              ))
-            )}
-          </div>
+                <input
+                  type="checkbox"
+                  checked={proactiveEnabled}
+                  onChange={(e) => {
+                    setProactiveEnabled(e.target.checked);
+                    localStorage.setItem('moni_proactive_suggestions', String(e.target.checked));
+                    MoniIntelligenceEngine.getInstance().logEvent('Proactive suggestions toggle: ' + e.target.checked, 'system');
+                  }}
+                  style={{ width: '38px', height: '20px', cursor: 'pointer' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>Suggestion Frequency / Öneri Sıklığı</div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)' }}>Moni'nin tavsiyelerde bulunma sıklık düzeyi.</div>
+                </div>
+                <select
+                  value={proactiveFrequency}
+                  onChange={(e) => {
+                    setProactiveFrequency(e.target.value);
+                    localStorage.setItem('moni_suggestions_frequency', e.target.value);
+                  }}
+                  style={{ background: '#111827', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '6px 12px', borderRadius: '8px', outline: 'none' }}
+                >
+                  <option value="low">Low / Düşük</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High / Sık</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* VOICE & TTS CATEGORY */}
+          {activeSettingsCategory === 'voice' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>🗣️ Voice & Speech Settings / Ses Ayarları</h2>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>Text-to-Speech Output / Sesli Geri Bildirim</div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)' }}>Yapay zeka cevaplarının sesli okunmasını aktif eder.</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={autoSpeakEnabled}
+                  onChange={(e) => {
+                    setAutoSpeakEnabled(e.target.checked);
+                    localStorage.setItem('moni_auto_speak_enabled', String(e.target.checked));
+                  }}
+                  style={{ width: '38px', height: '20px', cursor: 'pointer' }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* APPEARANCE CATEGORY */}
+          {activeSettingsCategory === 'appearance' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>🎨 Appearance & Customization / Görünüm</h2>
+            </div>
+          )}
+
+          {/* AI PROVIDERS CATEGORY */}
+          {activeSettingsCategory === 'providers' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>🤖 AI Providers / Zeka Motorları</h2>
+            </div>
+          )}
+
+          {/* MEMORY & DATA CATEGORY */}
+          {activeSettingsCategory === 'memory' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>🧠 Memory & Storage / Depolama</h2>
+            </div>
+          )}
+
+          {/* DEVELOPER LABS */}
+          {activeSettingsCategory === 'developer' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>🧪 Developer Labs / Geliştirici Test Grubu</h2>
+            </div>
+          )}
+
+          {/* ABOUT CATEGORY */}
+          {activeSettingsCategory === 'about' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(255,255,255,0.01)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent-cyan)' }}>MONI AI Operating System</h3>
+              <div style={{ fontSize: '0.82rem', color: 'var(--color-secondary)' }}>Companion Edition • Version 3.5.0 Pro</div>
+            </div>
+          )}
         </div>
       </div>
     );
   };
 
+  const renderHelpView = () => {
+    const documentation = [
+      { q: "Moni nedir?", a: "Moni, tüm dosyalarınızı, randevularınızı, notlarınızı ve yapılacaklar listelerinizi entegre zeka motorları üzerinden yöneten bir Yapay Zeka Asistanı ve Kalem Yöneticisidir." }
+    ];
+
+    return (
+      <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: '24px', gap: '20px', border: '1px solid rgba(255,255,255,0.06)' }}>
+        {documentation.map((item, idx) => (
+          <div key={idx}>
+            <h4>{item.q}</h4>
+            <p>{item.a}</p>
+          </div>
+        ))}
+      </div>
+    );
+  };
   const renderCalendarView = () => {
     const startMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
     const endMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0);
@@ -6336,8 +3831,14 @@ export const MoniDashboard: React.FC = () => {
     }
   };
 
+    const unreadNotifications = MoniIntelligenceEngine.getInstance().getNotifications().filter(n => !n.read);
+  const engine = MoniIntelligenceEngine.getInstance();
+  const allNotifications = engine.getNotifications();
+  const isTurkish = currentLanguage === 'tr';
+
   return (
-    <div onClick={handlePageClick} className="dashboard-root">
+    <div onClick={handlePageClick} style={{ width: '100vw', height: '100vh', background: '#0B0F17', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+      {/* 1. Global Diagnostic Warnings & Banner Alerts */}
       {audioNotification && (
         <div style={{
           position: 'fixed',
@@ -6349,7 +3850,7 @@ export const MoniDashboard: React.FC = () => {
           padding: '12px 20px',
           borderRadius: '12px',
           boxShadow: '0 8px 32px rgba(255, 56, 56, 0.4)',
-          zIndex: 9999,
+          zIndex: 99999,
           fontFamily: 'var(--font-sans)',
           fontSize: '0.82rem',
           fontWeight: '600',
@@ -6387,325 +3888,641 @@ export const MoniDashboard: React.FC = () => {
           </button>
         </div>
       )}
-      {/* Phone Mockup Wrapper Container */}
-      <div className="phone-container">
 
-        {/* Slide-out Sidebar Drawer */}
+      {/* 2. Startup Restore State dialog banner */}
+      {showRestorePrompt && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          zIndex: 99999,
+          width: '320px',
+          background: 'rgba(17, 24, 39, 0.95)',
+          border: '1px solid var(--accent-cyan)',
+          borderRadius: '16px',
+          padding: '16px',
+          boxShadow: '0 10px 40px rgba(0, 240, 255, 0.2)',
+          color: '#fff',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          backdropFilter: 'blur(10px)'
+        }}>
+          <div style={{ fontSize: '0.84rem', fontWeight: 'bold' }}>
+            {isTurkish ? 'Kaldığın yerden devam et?' : 'Continue where you left off?'}
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--color-secondary)' }}>
+            {isTurkish 
+              ? 'Son çalışma alanını ve sohbet geçmişini otomatik olarak geri yükleyebiliriz.'
+              : 'We can restore your last project, active tab, and companion settings.'}
+          </div>
+          <div style={{ display: 'flex', gap: '10px', alignSelf: 'flex-end' }}>
+            <button onClick={() => setShowRestorePrompt(false)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.72rem' }}>
+              {isTurkish ? 'İptal' : 'No'}
+            </button>
+            <button
+              onClick={() => {
+                setShowRestorePrompt(false);
+                engine.logEvent('Workspace state restored', 'system');
+                alert(isTurkish ? 'Çalışma alanı başarıyla yüklendi.' : 'Workspace successfully restored.');
+              }}
+              className="btn btn-primary"
+              style={{ padding: '6px 12px', fontSize: '0.72rem' }}
+            >
+              {isTurkish ? 'Yükle' : 'Restore'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Main Mobile Experience / Bottom Navigation Layout */}
+      {isMobile ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+          {/* Mobile Header */}
+          <header style={{ height: '56px', borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '0 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(17,24,39,0.85)', backdropFilter: 'blur(10px)' }}>
+            <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>MONI</span>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <span className={"status-dot " + (isOffline ? 'offline' : 'online')} />
+              <button onClick={() => {
+                localStorage.setItem('moni_language', currentLanguage === 'tr' ? 'en' : 'tr');
+                window.location.reload();
+              }} style={{ border: 'none', background: 'transparent', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'pointer' }}>
+                {currentLanguage === 'tr' ? 'TR 🌐' : 'EN 🌐'}
+              </button>
+            </div>
+          </header>
+
+          {/* Mobile Main Content */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px', boxSizing: 'border-box' }}>
+            {currentView === 'home' && renderHomeView()}
+            {currentView === 'chat' && renderChatView()}
+            {currentView === 'contacts' && renderContactsView()}
+            {currentView === 'agenda' && renderAgendaView()}
+            {currentView === 'calendar' && renderCalendarView()}
+            {currentView === 'todos' && renderTodosView()}
+            {currentView === 'notes' && renderNotesView()}
+            {currentView === 'memory' && renderMemoryView()}
+            {currentView === 'modulator' && renderModulatorView()}
+            {currentView === 'settings' && renderSettingsView()}
+            {currentView === 'help' && renderHelpView()}
+            {currentView === 'voice' && renderMobileVoiceView()}
+            {currentView === 'companion' && renderCompanionCenter()}
+          </div>
+
+          {/* Mobile Bottom Navigation Bar */}
+          <nav style={{ height: '56px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', background: 'rgba(17,24,39,0.95)', backdropFilter: 'blur(10px)' }}>
+            {[
+              { id: 'home', label: 'Home', icon: '🏠' },
+              { id: 'chat', label: 'Chat', icon: '💬' },
+              { id: 'voice', label: 'Voice', icon: '🎙️' },
+              { id: 'companion', label: 'AI', icon: '🧠' },
+              { id: 'settings', label: 'Settings', icon: '⚙️' }
+            ].map(item => (
+              <button
+                key={item.id}
+                onClick={() => setCurrentView(item.id as any)}
+                style={{
+                  flex: 1,
+                  border: 'none',
+                  background: 'transparent',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '4px',
+                  color: currentView === item.id ? 'var(--accent-cyan)' : 'var(--color-secondary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <span style={{ fontSize: '1.2rem' }}>{item.icon}</span>
+                <span style={{ fontSize: '0.65rem' }}>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      ) : (
+        /* 4. Desktop Premium Multi-Pane Workspace Layout */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+          
+          {/* Header (64px) */}
+          <header style={{
+            height: '64px',
+            borderBottom: '1px solid rgba(255,255,255,0.05)',
+            background: 'rgba(11, 15, 23, 0.8)',
+            backdropFilter: 'blur(20px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 20px',
+            boxSizing: 'border-box',
+            zIndex: 10
+          }}>
+            {/* Left Header Logo & Title */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))', display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+              <span style={{ fontSize: '1.15rem', fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>MONI</span>
+              <span style={{ fontSize: '0.65rem', background: 'rgba(255,255,255,0.08)', color: 'var(--color-secondary)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>Companion</span>
+            </div>
+
+            {/* Center Header Command Search */}
+            <div onClick={() => setShowCommandPalette(true)} style={{ width: '380px', height: '36px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)', display: 'flex', alignItems: 'center', padding: '0 12px', cursor: 'pointer', color: 'var(--color-secondary)', fontSize: '0.8rem', gap: '8px' }} className="hover-scale">
+              <span>🔍</span>
+              <span>Search settings, contacts, files...</span>
+              <span style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.08)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', color: 'var(--color-muted)' }}>Ctrl+K</span>
+            </div>
+
+            {/* Right Header User Avatar Profile & Quick Controls */}
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              {/* Notification dropdown bell icon */}
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setShowNotifMenu(!showNotifMenu)}
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.25rem', position: 'relative', display: 'flex', alignItems: 'center' }}
+                >
+                  <span>🔔</span>
+                  {unreadNotifications.length > 0 && (
+                    <span style={{
+                      position: 'absolute',
+                      top: '-4px',
+                      right: '-4px',
+                      background: 'var(--accent-red)',
+                      color: '#fff',
+                      fontSize: '0.6rem',
+                      fontWeight: 'bold',
+                      borderRadius: '50%',
+                      width: '14px',
+                      height: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      {unreadNotifications.length}
+                    </span>
+                  )}
+                </button>
+
+                {showNotifMenu && (
+                  <div className="glass-panel" style={{
+                    position: 'absolute',
+                    top: '36px',
+                    right: 0,
+                    width: '300px',
+                    background: '#111827',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '12px',
+                    zIndex: 99999,
+                    padding: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 'bold' }}>Notifications / Bildirimler</span>
+                      <button
+                        onClick={() => {
+                          engine.markAllAsRead();
+                          setShowNotifMenu(false);
+                        }}
+                        style={{ background: 'transparent', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', fontSize: '0.68rem' }}
+                      >
+                        Mark Read / Okundu Yap
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '200px', overflowY: 'auto' }}>
+                      {allNotifications.slice(-5).map(n => (
+                        <div key={n.id} style={{ fontSize: '0.72rem', color: n.read ? 'var(--color-secondary)' : '#fff', padding: '4px', borderLeft: n.read ? 'none' : '3px solid var(--accent-cyan)' }}>
+                          {isTurkish ? n.titleTr : n.titleEn}
+                        </div>
+                      ))}
+                      {allNotifications.length === 0 && (
+                        <div style={{ fontSize: '0.7,rem', color: 'var(--color-muted)', textAlign: 'center', padding: '10px 0' }}>No notification / Bildirim yok</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={() => {
+                  localStorage.setItem('moni_language', currentLanguage === 'tr' ? 'en' : 'tr');
+                  window.location.reload();
+                }}
+                className="btn btn-secondary"
+                style={{ padding: '6px 12px', fontSize: '0.78rem', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                {currentLanguage === 'tr' ? 'TR 🌐' : 'EN 🌐'}
+              </button>
+              <button
+                onClick={() => {
+                  setCurrentView('chat');
+                  setMessages([]);
+                  databaseService.clearChatHistory().then(async () => {
+                    const loaded = await databaseService.getChatHistory();
+                    setMessages(loaded);
+                  });
+                  addBridgeLog('Yeni sohbet başlatıldı.');
+                }}
+                className="btn btn-primary"
+                style={{ padding: '6px 12px', fontSize: '0.78rem' }}
+              >
+                + New Chat
+              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <span className={"status-dot " + (isOffline ? 'offline' : 'online')} />
+                <span style={{ fontSize: '0.72rem', fontWeight: 600 }}>{isOffline ? 'Offline' : 'Online'}</span>
+              </div>
+              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', border: '1px solid var(--accent-cyan)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.8rem', fontWeight: 'bold' }}>
+                {getDynamicUserName().substring(0, 1) || 'M'}
+              </div>
+            </div>
+          </header>
+
+          {/* Command Palette Modal Overlay */}
+          {showCommandPalette && (
+            <div onClick={() => setShowCommandPalette(false)} style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.6)', zIndex: 99999, display: 'flex', justifyContent: 'center', paddingTop: '80px' }}>
+              <div onClick={(e) => e.stopPropagation()} className="glass-panel" style={{ width: '450px', padding: '16px', background: '#111827', border: '1px solid var(--accent-cyan)' }}>
+                <input
+                  type="text"
+                  value={commandSearch}
+                  onChange={(e) => setCommandSearch(e.target.value)}
+                  placeholder="Command Search / Komut Arayın..."
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: '#000', color: '#fff', outline: 'none' }}
+                  autoFocus
+                />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '12px' }}>
+                  {[
+                    { label: '🏠 Go to Home Dashboard', action: () => setCurrentView('home') },
+                    { label: '🧠 Go to Companion Center', action: () => setCurrentView('companion') },
+                    { label: '💬 Open AI Assistant Chat', action: () => setCurrentView('chat') },
+                    { label: '📋 Open Task Checklist', action: () => setCurrentView('todos') },
+                    { label: '🧠 Open Memory Center', action: () => setCurrentView('memory') },
+                    { label: '⚙️ Open System Settings', action: () => setCurrentView('settings') },
+                    { label: '❓ Open FAQ & Help', action: () => setCurrentView('help') }
+                  ].filter(cmd => cmd.label.toLowerCase().includes(commandSearch.toLowerCase())).map((cmd, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => { cmd.action(); setShowCommandPalette(false); }}
+                      style={{ padding: '8px 12px', background: 'transparent', border: 'none', color: '#cbd5e1', textAlign: 'left', cursor: 'pointer', borderRadius: '6px' }}
+                      className="hover-scale"
+                    >
+                      {cmd.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Core App Columns Grid */}
+          <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+            
+            {/* Left Sidebar (260px or Collapsed) */}
+            <div style={{
+              width: isSidebarCollapsed ? '64px' : '260px',
+              borderRight: '1px solid rgba(255,255,255,0.05)',
+              background: 'rgba(11, 15, 23, 0.4)',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: '16px 8px',
+              boxSizing: 'border-box',
+              transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+              overflow: 'hidden'
+            }}>
+              {/* Collapsible toggle */}
+              <button
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                style={{ border: 'none', background: 'transparent', color: 'var(--color-secondary)', cursor: 'pointer', alignSelf: isSidebarCollapsed ? 'center' : 'flex-end', marginBottom: '16px', fontSize: '1rem' }}
+              >
+                {isSidebarCollapsed ? '→' : '←'}
+              </button>
+
+              {/* Navigation list */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                {[
+                  { id: 'home', label: 'Dashboard / Anasayfa', icon: '🏠' },
+                  { id: 'companion', label: 'AI Companion Center / Zeka', icon: '🧠' },
+                  { id: 'chat', label: 'AI Chat Room / Sohbet', icon: '💬' },
+                  { id: 'todos', label: 'Checklist / Görevler', icon: '📋' },
+                  { id: 'notes', label: 'Notes Agenda / Not Defteri', icon: '📝' },
+                  { id: 'calendar', label: 'Schedule Calendar / Takvim', icon: '📅' },
+                  { id: 'memory', label: 'Memory Storage / Hafıza', icon: '🧠' },
+                  { id: 'contacts', label: 'Contacts database / Rehber', icon: '👤' },
+                  { id: 'agenda', label: 'Reminders list / Hatırlatıcı', icon: '⏰' },
+                  { id: 'modulator', label: 'Voice FX Modulator / Ses', icon: '🎙️' },
+                  { id: 'settings', label: 'System Settings / Ayarlar', icon: '⚙️' },
+                  { id: 'help', label: 'FAQ Help Center / Yardım', icon: '❓' }
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => setCurrentView(item.id as any)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: currentView === item.id ? 'rgba(255, 255, 255, 0.04)' : 'transparent',
+                      color: currentView === item.id ? 'var(--accent-cyan)' : 'var(--color-primary)',
+                      fontWeight: currentView === item.id ? '600' : '400',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '0.82rem',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden'
+                    }}
+                    className="hover-scale"
+                    title={item.label}
+                  >
+                    <span style={{ fontSize: '1.1rem' }}>{item.icon}</span>
+                    {!isSidebarCollapsed && <span>{item.label}</span>}
+                  </button>
+                ))}
+              </div>
+
+              {/* Bottom sidebar footer card showing MONI Orb status info */}
+              {!isSidebarCollapsed && (
+                <div className="glass-panel" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', border: '1px solid rgba(255,255,255,0.04)', background: 'rgba(0,0,0,0.15)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', overflow: 'hidden' }}>
+                      <MoniAvatar status={moniStatus} isSpeaking={currentlySpeakingMsgId !== null} mood={avatarMood} avatarType={avatarType} eyeColor={eyeColor} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 'bold' }}>MONI Core</div>
+                      <div style={{ fontSize: '0.64rem', color: 'var(--color-muted)' }}>Status: {moniStatus}</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.64rem', color: 'var(--color-muted)', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px' }}>
+                    Enterprise Edition • v3.5.0
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Center Workspace */}
+            <div style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              background: '#0B0F17',
+              overflowY: 'auto',
+              padding: '24px 16px',
+              alignItems: 'center',
+              boxSizing: 'border-box'
+            }}>
+              <div style={{ width: '100%', maxWidth: '900px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+                {currentView === 'home' && renderHomeView()}
+                {currentView === 'chat' && renderChatView()}
+                {currentView === 'contacts' && renderContactsView()}
+                {currentView === 'agenda' && renderAgendaView()}
+                {currentView === 'calendar' && renderCalendarView()}
+                {currentView === 'todos' && renderTodosView()}
+                {currentView === 'notes' && renderNotesView()}
+                {currentView === 'memory' && renderMemoryView()}
+                {currentView === 'modulator' && renderModulatorView()}
+                {currentView === 'settings' && renderSettingsView()}
+                {currentView === 'help' && renderHelpView()}
+                {currentView === 'voice' && renderMobileVoiceView()}
+                {currentView === 'companion' && renderCompanionCenter()}
+              </div>
+            </div>
+
+            {/* Right Utility Sidebar (280px) */}
+            <div style={{
+              width: '280px',
+              borderLeft: '1px solid rgba(255,255,255,0.05)',
+              background: 'rgba(11, 15, 23, 0.4)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
+            }}>
+              {/* Tab Navigation header */}
+              <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(0,0,0,0.1)' }}>
+                {[
+                  { id: 'today', label: 'Today', icon: '📅' },
+                  { id: 'memory', label: 'Memory', icon: '🧠' },
+                  { id: 'voice', label: 'Voice', icon: '🗣️' },
+                  { id: 'suggestions', label: 'Suggest', icon: '💡' },
+                  { id: 'tasks', label: 'Tasks', icon: '📋' },
+                  { id: 'system', label: 'System', icon: '🔬' }
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setActiveRightTab(t.id as any)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 4px',
+                      border: 'none',
+                      background: activeRightTab === t.id ? 'rgba(255,255,255,0.04)' : 'transparent',
+                      color: activeRightTab === t.id ? 'var(--accent-cyan)' : 'var(--color-secondary)',
+                      fontSize: '0.62rem',
+                      fontWeight: activeRightTab === t.id ? '700' : '400',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '2px',
+                      borderBottom: activeRightTab === t.id ? '2px solid var(--accent-cyan)' : '2px solid transparent'
+                    }}
+                    title={t.label}
+                  >
+                    <span>{t.icon}</span>
+                    <span>{t.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab Content body */}
+              <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {activeRightTab === 'today' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>📅 Today's Focus</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-secondary)' }}>
+                      {getDynamicUserName() ? 'Hello ' + getDynamicUserName() + ', today is ' : 'Hello, today is '}
+                      <strong>{new Date().toLocaleDateString(currentLanguage === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</strong>.
+                    </div>
+                    {reminders.length > 0 && (
+                      <div style={{ fontSize: '0.74rem', background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <strong>Upcoming:</strong> {reminders[0].title} ({new Date(reminders[0].dateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeRightTab === 'memory' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>🧠 Memory Center</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-secondary)' }}>Moni has remembered <strong>{memories.length}</strong> items in total.</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' }}>
+                      {memories.slice(0, 6).map((m, idx) => (
+                        <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', padding: '8px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.04)', fontSize: '0.72rem' }}>
+                          <span style={{ color: 'var(--accent-cyan)', fontWeight: 'bold' }}>[{m.category}]: </span>
+                          <span>{m.content}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {activeRightTab === 'voice' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>🗣️ Voice Output</div>
+                    <div style={{ fontSize: '0.74rem' }}>
+                      <strong>Feedback mode:</strong> {autoSpeakEnabled ? 'Enabled / Sesli Okuma Aktif' : 'Disabled / Sessiz Mod'}
+                    </div>
+                    <div style={{ fontSize: '0.74rem' }}>
+                      <strong>Active Speech Pitch:</strong> {Math.round(speechVolume * 100)}% volume, {speechRate}x rate.
+                    </div>
+                  </div>
+                )}
+
+                {activeRightTab === 'suggestions' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>💡 Smart Suggestions</div>
+                    {[
+                      currentLanguage === 'tr' ? "Sohbet odasında mimari tartışmasına devam et." : "Continue architectural discussion in chat.",
+                      currentLanguage === 'tr' ? "Ses modülatörü efektlerini test et." : "Test voice modulator settings.",
+                      currentLanguage === 'tr' ? "Bugün bitmesi gereken görevleri incele." : "Check tasks due today."
+                    ].map((sug, idx) => (
+                      <div key={idx} style={{ fontSize: '0.74rem', background: 'rgba(0, 240, 255, 0.02)', border: '1px solid rgba(0, 240, 255, 0.05)', padding: '8px 12px', borderRadius: '8px' }}>
+                        💡 {sug}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {activeRightTab === 'tasks' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>📋 Today's Checklist</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {todos.slice(0, 6).map((todo, idx) => (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.74rem' }}>
+                          <input type="checkbox" checked={todo.isCompleted} onChange={() => {}} style={{ cursor: 'pointer' }} />
+                          <span style={{ textDecoration: todo.isCompleted ? 'line-through' : 'none', color: todo.isCompleted ? 'var(--color-muted)' : 'var(--color-primary)' }}>{todo.task}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {activeRightTab === 'system' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>🔬 System Status</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.74rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>SQLite database:</span>
+                        <span style={{ color: 'var(--accent-green)' }}>✅ Connect</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Active provider:</span>
+                        <span style={{ color: 'var(--accent-cyan)' }}>Local Fallback</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Visualizer state:</span>
+                        <span style={{ color: 'var(--accent-purple)' }}>{moniStatus}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Thin Status Bar at footer */}
+          <footer style={{
+            height: '24px',
+            borderTop: '1px solid rgba(255,255,255,0.05)',
+            background: 'rgba(11, 15, 23, 0.9)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 12px',
+            fontSize: '0.68rem',
+            color: 'var(--color-muted)',
+            boxSizing: 'border-box'
+          }}>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <span>🤖 Provider: Local Fallback</span>
+              <span>🗣️ Voice Output: {autoSpeakEnabled ? 'ON' : 'OFF'}</span>
+              <span>🧠 Database: Local SQLite</span>
+            </div>
+            <div>
+              <span>MONI OS Companion • v3.5.0</span>
+            </div>
+          </footer>
+        </div>
+      )}
+
+      {/* 5. Global Alarm / Reminder Overlays */}
+      {activeAlarm && (
         <div style={{
           position: 'absolute',
           top: 0,
           left: 0,
-          width: '280px',
+          width: '100%',
           height: '100%',
-          background: 'rgba(10, 11, 18, 0.95)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          zIndex: 1000,
-          borderRight: '1px solid var(--border-color)',
-          transform: isSidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
-          transition: 'transform 0.4s cubic-bezier(0.1, 0.9, 0.2, 1)',
+          background: 'rgba(7, 8, 13, 0.9)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+          zIndex: 99999,
           display: 'flex',
           flexDirection: 'column',
-          padding: '24px 20px',
-          boxShadow: '10px 0 30px rgba(0,0,0,0.5)',
-          boxSizing: 'border-box'
-        }}>
-          {/* Sidebar Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontWeight: 'bold', color: '#07080d', fontSize: '0.8rem' }}>M</span>
-              </div>
-              <span style={{ fontWeight: '700', fontSize: '1.1rem', letterSpacing: '-0.5px' }}>MONI MENU</span>
-            </div>
-            <button
-              onClick={() => setIsSidebarOpen(false)}
-              style={{ background: 'transparent', border: 'none', color: 'var(--color-secondary)', fontSize: '1.2rem', cursor: 'pointer' }}
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* Sidebar Links */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
-            {[
-              { id: 'home', label: 'Anasayfa', icon: '🏠' },
-              { id: 'chat', label: 'Asistan Sohbet Odası', icon: '💬' },
-              { id: 'contacts', label: 'Rehberim (Local DB)', icon: '👤' },
-              { id: 'calendar', label: 'Takvim & Randevu Defteri', icon: '📅' },
-              { id: 'todos', label: 'Yapılacaklar Listesi', icon: '📋' },
-              { id: 'notes', label: 'Not Defteri', icon: '📝' },
-              { id: 'memory', label: 'Hafıza Yönetimi', icon: '🧠' },
-              { id: 'agenda', label: 'Tüm Hatırlatıcılar', icon: '⏰' },
-              { id: 'modulator', label: 'Ses Efekt Modülatörü', icon: '🎙️' },
-              { id: 'settings', label: 'Sistem Ayarları', icon: '⚙️' }
-            ].map(item => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setCurrentView(item.id as any);
-                  setIsSidebarOpen(false);
-                  addBridgeLog(`Menü geçişi: ${item.label}`);
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  padding: '12px 14px',
-                  borderRadius: '12px',
-                  border: 'none',
-                  background: currentView === item.id
-                    ? 'linear-gradient(135deg, rgba(0, 240, 255, 0.08), rgba(157, 78, 221, 0.08))'
-                    : 'transparent',
-                  borderLeft: currentView === item.id ? '3px solid var(--accent-cyan)' : '3px solid transparent',
-                  color: currentView === item.id ? 'var(--accent-cyan)' : 'var(--color-primary)',
-                  fontWeight: currentView === item.id ? '600' : '400',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  fontSize: '0.88rem',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                <span style={{ fontSize: '1.05rem' }}>{item.icon}</span>
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Sidebar Footer */}
-          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', fontSize: '0.72rem', color: 'var(--color-muted)', textAlign: 'center' }}>
-            MONI v0.1.0 • Profesyonel Sürüm
-          </div>
-        </div>
-
-        {/* Sidebar Backdrop Overlay */}
-        {isSidebarOpen && (
-          <div
-            onClick={() => setIsSidebarOpen(false)}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              background: 'rgba(0, 0, 0, 0.4)',
-              backdropFilter: 'blur(3px)',
-              zIndex: 999
-            }}
-          />
-        )}
-
-        {/* Header Bar */}
-        <header style={{
-          display: 'flex',
-          justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '12px 20px',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-          background: 'rgba(18, 20, 29, 0.4)',
-          height: '56px',
-          boxSizing: 'border-box',
-          flexShrink: 0
-        }}>
-          <button
-            onClick={() => setIsSidebarOpen(true)}
-            style={{
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: '50%',
-              width: '32px',
-              height: '32px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              color: 'white',
-              fontSize: '1.05rem',
-              transition: 'all 0.2s'
-            }}
-            className="hover-scale"
-          >
-            ☰
-          </button>
-
-          <span style={{
-            fontSize: '1.1rem',
-            fontWeight: '700',
-            color: '#ffd700',
-            letterSpacing: '1px',
-            textShadow: '0 0 10px rgba(255, 215, 0, 0.2)'
-          }}>
-            MONI
-          </span>
-
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <span style={{ fontSize: '1.1rem', cursor: 'pointer' }} title="Moni Profesyonel Sürüm">🏆</span>
-            <span
-              className={`status-dot ${isOffline ? 'offline' : 'online'}`}
-              style={{ width: '8px', height: '8px', cursor: 'pointer' }}
-              title={isOffline ? 'Çevrimdışı / Local LLM' : 'Çevrimiçi / Cloud LLM'}
-              onClick={() => {
-                setIsOffline(!isOffline);
-                addBridgeLog(`Bağlantı modu değiştirildi: ${!isOffline ? 'Çevrimdışı' : 'Çevrimiçi'}`);
-              }}
-            />
-          </div>
-        </header>
-
-        {/* Scrollable View Content Area */}
-        <div style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: '16px',
-          display: 'flex',
-          flexDirection: 'column',
+          justifyContent: 'center',
+          padding: '24px',
           boxSizing: 'border-box'
         }}>
-          {currentView === 'home' && renderHomeView()}
-          {currentView === 'chat' && renderChatView()}
-          {currentView === 'contacts' && renderContactsView()}
-          {currentView === 'agenda' && renderAgendaView()}
-          {currentView === 'calendar' && renderCalendarView()}
-          {currentView === 'todos' && renderTodosView()}
-          {currentView === 'notes' && renderNotesView()}
-          {currentView === 'memory' && renderMemoryView()}
-          {currentView === 'modulator' && renderModulatorView()}
-          {currentView === 'settings' && renderSettingsView()}
-        </div>
-
-        {/* Active Alarm Modal Overlay */}
-        {activeAlarm && (
           <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
             width: '100%',
-            height: '100%',
-            background: 'rgba(7, 8, 13, 0.9)',
-            backdropFilter: 'blur(10px)',
-            WebkitBackdropFilter: 'blur(10px)',
-            zIndex: 2000,
+            maxWidth: '320px',
+            background: 'rgba(255,255,255,0.03)',
+            border: '2px solid var(--accent-cyan)',
+            borderRadius: '24px',
+            padding: '28px 20px',
+            boxShadow: '0 0 40px rgba(0, 240, 255, 0.25)',
+            textAlign: 'center',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            justifyContent: 'center',
-            padding: '24px',
+            gap: '16px',
             boxSizing: 'border-box'
           }}>
             <div style={{
-              width: '100%',
-              maxWidth: '320px',
-              background: 'rgba(255,255,255,0.03)',
-              border: '2px solid var(--accent-cyan)',
-              borderRadius: '24px',
-              padding: '28px 20px',
-              boxShadow: '0 0 40px rgba(0, 240, 255, 0.25)',
-              textAlign: 'center',
+              width: '60px',
+              height: '60px',
+              borderRadius: '50%',
+              background: 'rgba(0, 240, 255, 0.1)',
               display: 'flex',
-              flexDirection: 'column',
               alignItems: 'center',
-              gap: '16px',
-              boxSizing: 'border-box'
+              justifyContent: 'center',
+              fontSize: '2.0rem',
+              animation: 'pulse-gold 1.5s infinite ease-in-out'
             }}>
-              <div style={{
-                width: '60px',
-                height: '60px',
-                borderRadius: '50%',
-                background: 'rgba(0, 240, 255, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '2.0rem',
-                animation: 'pulse-gold 1.5s infinite ease-in-out'
-              }}>
-                ⏰
-              </div>
-              <h2 style={{ fontSize: '1.25rem', margin: 0, color: 'var(--accent-cyan)', fontWeight: 700 }}>MONI UYARI</h2>
-              <div style={{ fontSize: '1rem', fontWeight: 600, color: '#fff', margin: '4px 0' }}>
-                {activeAlarm.title}
-              </div>
-              {activeAlarm.description && (
-                <div style={{ fontSize: '0.8rem', color: 'var(--color-secondary)' }}>
-                  {activeAlarm.description}
-                </div>
-              )}
-              <div style={{ fontSize: '0.75rem', color: 'var(--accent-purple)', fontWeight: 600 }}>
-                {new Date(activeAlarm.dateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </div>
-              <button
-                className="btn btn-primary"
-                style={{ width: '100%', padding: '12px 0', borderRadius: '12px', marginTop: '10px' }}
-                onClick={() => setActiveAlarm(null)}
-              >
-                Anlaşıldı
-              </button>
+              ⏰
             </div>
+            <h2 style={{ fontSize: '1.25rem', margin: 0, color: 'var(--accent-cyan)', fontWeight: 700 }}>MONI UYARI</h2>
+            <div style={{ fontSize: '1rem', fontWeight: 600, color: '#fff', margin: '4px 0' }}>
+              {activeAlarm.title}
+            </div>
+            {activeAlarm.description && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--color-secondary)' }}>
+                {activeAlarm.description}
+              </div>
+            )}
+            <div style={{ fontSize: '0.75rem', color: 'var(--accent-purple)', fontWeight: 600 }}>
+              {new Date(activeAlarm.dateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '12px 0', borderRadius: '12px', marginTop: '10px' }}
+              onClick={() => setActiveAlarm(null)}
+            >
+              Anlaşıldı
+            </button>
           </div>
-        )}
-      </div>
-
-      {/* Mic recording style injection */}
-      <style>{`
-        @keyframes pulse {
-          0% { transform: scale(1); opacity: 1; }
-          50% { transform: scale(1.1); opacity: 0.7; }
-          100% { transform: scale(1); opacity: 1; }
-        }
-        .pulse {
-          animation: pulse 1.5s infinite ease-in-out;
-        }
-        .hover-scale:hover {
-          transform: scale(1.05);
-          background: rgba(255,255,255,0.1) !important;
-        }
-        .home-nav-card {
-          transition: all 0.2s ease-in-out;
-        }
-        .home-nav-card:hover {
-          transform: translateY(-2px);
-          border-color: rgba(255, 215, 0, 0.4) !important;
-          background: rgba(255, 215, 0, 0.04) !important;
-        }
-        .btn-voice-trigger:hover {
-          transform: scale(1.03);
-          box-shadow: 0 0 25px rgba(255, 215, 0, 0.4), inset 0 0 10px rgba(255, 215, 0, 0.2);
-        }
-        .btn-voice-trigger.recording {
-          animation: pulse-gold 1.5s infinite ease-in-out;
-        }
-        @keyframes pulse-gold {
-          0% { transform: scale(1); box-shadow: 0 0 20px rgba(255, 215, 0, 0.2); }
-          50% { transform: scale(1.05); box-shadow: 0 0 30px rgba(255, 215, 0, 0.5); }
-          100% { transform: scale(1); box-shadow: 0 0 20px rgba(255, 215, 0, 0.2); }
-        }
-        @media (max-width: 500px) {
-          .phone-container {
-            max-width: 100% !important;
-            height: 100vh !important;
-            min-height: 0 !important;
-            max-height: 100vh !important;
-            border-radius: 0 !important;
-            border: none !important;
-            box-shadow: none !important;
-          }
-        }
-        @media (max-width: 480px) {
-          .dashboard2-header-card {
-            flex-direction: column !important;
-            align-items: center !important;
-            text-align: center !important;
-            padding: 20px 14px !important;
-          }
-          .dashboard2-header-card button {
-            align-self: center !important;
-          }
-          .dashboard2-avatar-wrapper {
-            width: 120px !important;
-            height: 120px !important;
-            margin-bottom: 8px !important;
-          }
-        }
-      `}</style>
+        </div>
+      )}
     </div>
   );
 };

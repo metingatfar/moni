@@ -10,6 +10,39 @@ export interface SpeechVoice {
 export class VoiceService {
   private static instance: VoiceService;
   private voices: SpeechSynthesisVoice[] = [];
+  
+  public voiceState: 'idle' | 'preparing' | 'speaking' | 'cancelled' | 'fallback' = 'idle';
+
+  private updateVoiceState(state: 'idle' | 'preparing' | 'speaking' | 'cancelled' | 'fallback') {
+    this.voiceState = state;
+    if (typeof window !== 'undefined') {
+      (window as any).moniVoiceState = state;
+      window.dispatchEvent(new CustomEvent('moni_voice_state_changed', { detail: { state } }));
+    }
+  }
+
+  public cancelAllSpeech() {
+    this.updateVoiceState('cancelled');
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (typeof window !== 'undefined') {
+      const audio = (window as any).moniAudio as HTMLAudioElement;
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+        if (audio.src && audio.src.startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(audio.src);
+          } catch (_) {}
+        }
+        audio.src = '';
+      }
+    }
+    setTimeout(() => {
+      this.updateVoiceState('idle');
+    }, 100);
+  }
 
   private constructor() {
     this.loadVoices();
@@ -213,9 +246,13 @@ export class VoiceService {
     text: string,
     profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa',
     onEnd?: () => void,
-    options?: { rate?: number; volume?: number; voiceName?: string },
+    options?: { rate?: number; volume?: number; voiceName?: string; preferredMode?: string },
     onError?: (errMessage: string) => void
   ) {
+    // 0. Interrupt previous speech and lock
+    this.cancelAllSpeech();
+    this.updateVoiceState('preparing');
+
     const isIOS = typeof navigator !== 'undefined' &&
       (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
@@ -223,15 +260,23 @@ export class VoiceService {
       /Safari/.test(navigator.userAgent) &&
       !/Chrome/.test(navigator.userAgent);
 
+    let elevenLabsSucceeded = false;
+
     // ── 1. Try ElevenLabs TTS via backend ─────────────────────────────────────
     try {
       const audio = await this.openAiTts(text, options);
+      
+      elevenLabsSucceeded = true;
+      this.updateVoiceState('speaking');
 
       audio.onended = () => {
+        this.updateVoiceState('idle');
         if (onEnd) onEnd();
       };
+      
       audio.onerror = (errEvent: any) => {
         console.warn('[MONI TTS] ElevenLabs çalma hatası. Yerel ses motoru devreye giriyor.', errEvent);
+        this.updateVoiceState('fallback');
         this.speakWithLocalSpeechSynthesis(text, profile, onEnd, options, onError);
       };
 
@@ -239,11 +284,11 @@ export class VoiceService {
       console.log('[MONI TTS] ElevenLabs kadın sesi aktif');
       return; // Success
     } catch (e: any) {
+      elevenLabsSucceeded = false;
       const isPaidPlanError = e.message && (e.message.includes('402') || e.message.includes('payment_required') || e.message.includes('paid_plan'));
       
       if (isPaidPlanError) {
         console.warn('[MONI TTS] ElevenLabs Premium doğal kadın sesi için plan yükseltilmeli. Yerel ses kullanılıyor.');
-        // Show info notification instead of red error popup
         const notificationEvent = new CustomEvent('moni_info_notification', {
           detail: { message: 'Kota doldu, yerel ses motoru kullanılıyor.' }
         });
@@ -252,6 +297,8 @@ export class VoiceService {
         console.warn('[MONI TTS] ElevenLabs TTS başarısız, Google Cloud TTS deneniyor:', e.message);
       }
     }
+
+    if (elevenLabsSucceeded) return;
 
     // ── 2. Try Google Cloud TTS ───────────────────────────────────────────
     const googleApiKey = import.meta.env.VITE_GOOGLE_TTS_API_KEY || '';
@@ -293,13 +340,14 @@ export class VoiceService {
           let audio = (window as any).moniAudio as HTMLAudioElement;
           if (!audio) { audio = new Audio(); (window as any).moniAudio = audio; }
 
+          this.updateVoiceState('speaking');
           audio.src = audioUrl;
           if (options?.volume !== undefined) audio.volume = options.volume;
-          audio.onended = () => { if (onEnd) onEnd(); };
+          audio.onended = () => { this.updateVoiceState('idle'); if (onEnd) onEnd(); };
           audio.onerror = (errEvent: any) => {
             console.error('Google Cloud TTS ses oynatma hatası:', errEvent);
-            if (onError) onError('Ses oynatılamadı.');
-            else if (onEnd) onEnd();
+            this.updateVoiceState('fallback');
+            this.speakWithLocalSpeechSynthesis(text, profile, onEnd, options, onError);
           };
           await audio.play();
           console.log('[MONI TTS] Google Cloud TTS ile seslendirildi.');
@@ -311,6 +359,7 @@ export class VoiceService {
     }
 
     // ── 3. Web Speech API fallback ────────────────────────────────────────
+    this.updateVoiceState('fallback');
     this.speakWithLocalSpeechSynthesis(text, profile, onEnd, options, onError);
   }
 
@@ -321,7 +370,7 @@ export class VoiceService {
     text: string,
     profile: 'selin' | 'derin' | 'google-assistant' | 'gemini-vega' | 'gemini-ursa',
     onEnd?: () => void,
-    options?: { rate?: number; volume?: number; voiceName?: string },
+    options?: { rate?: number; volume?: number; voiceName?: string; preferredMode?: string },
     onError?: (errMessage: string) => void
   ) {
     const isSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
@@ -330,143 +379,126 @@ export class VoiceService {
     if (!isSupported) {
       const err = "Tarayıcınız yerel ses sentezlemeyi (SpeechSynthesis) desteklemiyor.";
       console.warn(err);
+      this.updateVoiceState('idle');
       if (onError) onError(err);
       else if (onEnd) onEnd();
       return;
     }
 
     try {
-      this.loadVoices(); // Refresh voices list
-      console.log(`[MONI TTS] Toplam bulunan ses sayısı: ${this.voices.length}`);
+      this.loadVoices();
       
       window.speechSynthesis.cancel();
 
-      // Fallback 1: No voices found on system at all -> Silent text mode
       if (this.voices.length === 0) {
         console.warn("[MONI TTS] Cihazda sesli okuma motoru bulunamadı, sessiz metin modu aktif.");
         const words = text.trim().split(/\s+/).length;
         const estimatedDuration = Math.max(1500, words * 350);
+        this.updateVoiceState('speaking');
         setTimeout(() => {
+          this.updateVoiceState('idle');
           if (onEnd) onEnd();
         }, estimatedDuration);
         return;
       }
 
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'tr-TR';
+      const currentLang = (typeof window !== 'undefined' && localStorage.getItem('moni_language')) || 'tr';
 
-      // Helper: detect known male voice names
+      if (currentLang === 'en') {
+        utterance.lang = 'en-US';
+      } else {
+        utterance.lang = 'tr-TR';
+      }
+
       const isMaleVoice = (name: string) =>
-        /tolga|cem|hakan|sabri|huseyin|male|erkek|man\b|boy/i.test(name);
+        /tolga|cem|hakan|sabri|huseyin|male|erkek|man\b|boy|david|mark|microsoft zira/i.test(name);
 
-      // 1. Filter Turkish voices (supporting tr-TR, tr_TR, tr)
-      const trVoices = this.voices.filter(v =>
+      let selectedVoice: SpeechSynthesisVoice | null = null;
+      let trVoices: SpeechSynthesisVoice[] = [];
+      let femaleTrVoices: SpeechSynthesisVoice[] = [];
+
+      const preferredMode = options?.preferredMode || localStorage.getItem('moni_preferred_voice_mode') || 'auto';
+
+      trVoices = this.voices.filter(v =>
         v.lang.toLowerCase().replace('_', '-').startsWith('tr') ||
         v.lang.toLowerCase().includes('tr')
       );
 
-      // 2. Prioritize female voices:
-      //    - Named female indicators (Yelda, Dilara, Seda, Siri Female, etc.)
-      //    - "Google Türkçe" / "Google Turkish" → treat as female (it is)
-      //    - Generic Turkish without a male marker → prefer over confirmed male
-      const femaleTrVoices = trVoices.filter(v => {
-        const name = v.name.toLowerCase();
-        const hasFemaleMarker = /dilara|yelda|emel|seda|filiz|sibel|hazel|ayse|zeynep|yasemin|ipek|suna|female|bayan|woman|girl|siri|her/i.test(name);
-        const isGoogleTurkish = name.includes('google');  // "Google Türkçe" is female
-        return (hasFemaleMarker || isGoogleTurkish) && !isMaleVoice(name);
-      });
-
-      // Fallback: any Turkish voice that is not explicitly male
-      const nonMaleTrVoices = trVoices.filter(v => !isMaleVoice(v.name));
-
-      let selectedVoice: SpeechSynthesisVoice | null = null;
-
-      // Rule-based voice selection hierarchy
-      if (femaleTrVoices.length > 0) {
-        selectedVoice = femaleTrVoices[0];
-        console.log(`[MONI TTS] Türkçe kadın/Google sesi seçildi: ${selectedVoice.name} (${selectedVoice.lang})`);
-      } else if (nonMaleTrVoices.length > 0) {
-        selectedVoice = nonMaleTrVoices[0];
-        console.log(`[MONI TTS] Türkçe kadın sesi bulunamadı, erkek olmayan Türkçe ses seçildi: ${selectedVoice.name}`);
-        // Dispatch event indicating no Turkish female voice is on device
+      // Trigger Turkish voice warning if lang is TR but no Turkish voice is on system
+      if (currentLang === 'tr' && trVoices.length === 0) {
+        const warningMsg = 'Türkçe sistem sesi bulunamadı, varsayılan ses kullanılıyor.';
+        console.warn(warningMsg);
         const notificationEvent = new CustomEvent('moni_info_notification', {
-          detail: { message: 'Bu cihazda Türkçe kadın sesi yok, varsayılan ses kullanılıyor.' }
-        });
-        window.dispatchEvent(notificationEvent);
-      } else if (trVoices.length > 0) {
-        selectedVoice = trVoices[0];
-        console.log(`[MONI TTS] Yalnızca Türkçe erkek ses bulundu, kullanılıyor: ${selectedVoice.name}`);
-        const notificationEvent = new CustomEvent('moni_info_notification', {
-          detail: { message: 'Bu cihazda Türkçe kadın sesi yok, varsayılan ses kullanılıyor.' }
-        });
-        window.dispatchEvent(notificationEvent);
-      } else {
-        selectedVoice = this.voices.find(v => v.default) || this.voices[0] || null;
-        console.log(`[MONI TTS] Türkçe ses bulunamadı, sistem varsayılan sesi seçildi: ${selectedVoice ? selectedVoice.name : 'Yok'}`);
-        const notificationEvent = new CustomEvent('moni_info_notification', {
-          detail: { message: 'Bu cihazda Türkçe kadın sesi yok, varsayılan ses kullanılıyor.' }
+          detail: { message: warningMsg }
         });
         window.dispatchEvent(notificationEvent);
       }
 
-      // 3. Apply custom voice name choice from settings if provided
+      if (preferredMode === 'turkish') {
+        selectedVoice = trVoices.find(v => !isMaleVoice(v.name)) || trVoices[0] || null;
+      } else if (preferredMode === 'english') {
+        selectedVoice = this.voices.find(v => (v.lang.toLowerCase().startsWith('en') && !isMaleVoice(v.name))) || null;
+      } else if (preferredMode === 'male') {
+        selectedVoice = this.voices.find(v => isMaleVoice(v.name)) || null;
+      } else if (preferredMode === 'female') {
+        selectedVoice = this.voices.find(v => !isMaleVoice(v.name)) || null;
+      }
+
+      if (!selectedVoice) {
+        if (currentLang === 'en') {
+          const enVoices = this.voices.filter(v =>
+            v.lang.toLowerCase().replace('_', '-').startsWith('en') ||
+            v.lang.toLowerCase().includes('en')
+          );
+          selectedVoice = enVoices.find(v => !isMaleVoice(v.name)) || enVoices[0] || null;
+        } else {
+          femaleTrVoices = trVoices.filter(v => {
+            const name = v.name.toLowerCase();
+            return (/dilara|yelda|emel|seda|filiz|sibel/i.test(name) || name.includes('google')) && !isMaleVoice(name);
+          });
+          selectedVoice = femaleTrVoices[0] || trVoices.find(v => !isMaleVoice(v.name)) || trVoices[0] || null;
+        }
+      }
+
+      if (!selectedVoice) {
+        selectedVoice = this.voices.find(v => v.default) || this.voices[0] || null;
+      }
+
       if (options?.voiceName) {
         const customSelected = this.voices.find(v => v.name === options.voiceName);
-        if (customSelected) {
-          selectedVoice = customSelected;
-          console.log(`[MONI TTS] Kullanıcı ayarlarından seçilen yerel ses uygulandı: ${selectedVoice.name}`);
-        }
+        if (customSelected) selectedVoice = customSelected;
       }
 
       if (selectedVoice) {
         utterance.voice = selectedVoice;
       } else {
-        // Fallback 2: If we couldn't resolve any voice object, trigger silent fallback
-        console.warn("[MONI TTS] Seçilen ses nesnesi alınamadı. Sessiz metin modu aktif ediliyor.");
+        console.warn("[MONI TTS] Seçilen ses nesnesi alınamadı. Sessiz metin modu aktif.");
+        this.updateVoiceState('speaking');
         const words = text.trim().split(/\s+/).length;
-        const estimatedDuration = Math.max(1500, words * 350);
         setTimeout(() => {
+          this.updateVoiceState('idle');
           if (onEnd) onEnd();
-        }, estimatedDuration);
+        }, Math.max(1500, words * 350));
         return;
       }
 
-      console.log(`[MONI TTS] Konuşma başlatılıyor. Seçilen Ses: ${selectedVoice.name} (${selectedVoice.lang})`);
+      this.updateVoiceState('speaking');
 
-      // Pitch adjustment based on profile and whether we are using a female voice
       let pitch = 1.0;
       let rate = 1.0;
+      const isCurrentlyMale = selectedVoice ? isMaleVoice(selectedVoice.name) : false;
 
-      const hasFemaleTrVoice = femaleTrVoices.length > 0;
-      const isCurrentlyMale = selectedVoice ? selectedVoice.name.toLowerCase().match(/(tolga|cem|male|hakan|erkek|sabri|huseyin)/i) : false;
-
-      // Adjust profile values
       switch (profile) {
-        case 'selin':
-          pitch = 1.05;
-          rate = 1.0;
-          break;
-        case 'derin':
-          pitch = 1.20;
-          rate = 0.95;
-          break;
-        case 'google-assistant':
-          pitch = 1.0;
-          rate = 1.0;
-          break;
-        case 'gemini-vega':
-          pitch = 1.30;
-          rate = 1.02;
-          break;
-        case 'gemini-ursa':
-          pitch = 0.90;
-          rate = 0.92;
-          break;
+        case 'selin': pitch = 1.05; break;
+        case 'derin': pitch = 1.20; rate = 0.95; break;
+        case 'google-assistant': pitch = 1.0; break;
+        case 'gemini-vega': pitch = 1.30; rate = 1.02; break;
+        case 'gemini-ursa': pitch = 0.90; rate = 0.92; break;
       }
 
-      // If the selected voice is male, but profile expects female, increase pitch slightly as a synthesis helper
-      if (isCurrentlyMale || (!hasFemaleTrVoice && trVoices.length > 0)) {
-        pitch += 0.25; // boost pitch to sound more feminine/natural
+      if (isCurrentlyMale) {
+        pitch += 0.20;
       }
 
       utterance.pitch = pitch;
@@ -474,19 +506,14 @@ export class VoiceService {
       utterance.volume = options?.volume !== undefined ? options.volume : 1.0;
 
       utterance.onend = () => {
-        console.log("[MONI TTS] Yerel seslendirme başarıyla tamamlandı.");
+        this.updateVoiceState('idle');
         if (onEnd) onEnd();
       };
 
       utterance.onerror = (event: any) => {
-        console.error("[MONI TTS] Yerel seslendirme hatası detaylı raporu:", {
-          ttsSupported: isSupported,
-          voicesCount: this.voices.length,
-          selectedVoiceName: selectedVoice ? selectedVoice.name : 'Belirlenmedi',
-          errorEvent: event
-        });
-        const errMsg = `Yerel ses sentezleme hatası: ${event.error || 'Bilinmeyen Hata'}`;
-        if (onError) onError(errMsg);
+        console.error("[MONI TTS] Sentezleme hatası:", event);
+        this.updateVoiceState('idle');
+        if (onError) onError(`Yerel ses hatası: ${event.error || 'Bilinmeyen Hata'}`);
         else if (onEnd) onEnd();
       };
 

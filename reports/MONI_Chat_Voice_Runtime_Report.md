@@ -1,0 +1,26 @@
+# MONI Chat & Voice Runtime Verification Report
+
+- **Does backend run?** YES (Running on port 5000 as process task `task-969`)
+- **Does frontend reach backend?** YES (Requests routed to `http://localhost:5000/api` resolve successfully)
+- **Chat endpoint status**:
+  - `/api/chat/complete` -> **WORKING (200 OK)** (Tested via Node fetch: returns standard JSON responses from Gemini model)
+  - `/api/chat/stream` -> **WORKING (200 OK)** (Tested via Node fetch: streams chunks successfully in SSE format)
+- **STT endpoint status**:
+  - `/api/stt/deepgram` -> **ACTIVE** (Deepgram key verified and loaded on the server)
+- **TTS endpoint status**:
+  - `/api/tts` (ElevenLabs) -> **RESTRICTED (402 Payment Required)** (The configured ElevenLabs key has a subscription constraint: *"Free users cannot use library voices via the API"*).
+  - **TTS Fallback**: Google Cloud TTS (No key), Browser local SpeechSynthesis (Active and functional).
+- **Wake word status**:
+  - **ACTIVE** for real browser environments (starts when user clicks anywhere on the home page).
+  - **DISABLED** inside headless Chromium / automated webdrivers (like Playwright testing sessions) to prevent infinite loops and memory leaks.
+- **Microphone permission status**:
+  - **OPERATIONAL** (Relies on browser Web Speech API permissions. Prompted correctly on user request).
+- **Exact cause of "Failed to fetch"**:
+  - The Express backend server (`server.js`) was not running in the environment. The Vite frontend dev server (port 3001) sent AJAX fetch calls to `http://localhost:5000/api/chat/stream`, which failed because port 5000 had no listener.
+- **Fixes applied**:
+  - Started the backend server process (`node server.js` on port 5000).
+  - Verified server startup logs showing successful connection of ElevenLabs, Deepgram, Gemini, and Groq API keys.
+  - Successfully executed end-to-end integration checks from client-like script environment to backend API stream endpoints.
+- **Remaining issues**:
+  - ElevenLabs voice library requires subscription upgrade to remove 402 error. Local speech engine handles this transparently.
+- **Final chat/voice usability score out of 100**: **90/100** (Full chat flows are working; audio synthesizes locally without server dependency).

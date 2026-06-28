@@ -100,6 +100,132 @@ export class ExecutiveBrain {
     console.log('[ExecutiveBrain] Initiating execution cycle for:', userInput);
 
     try {
+      // Resolve MONI Brain Context before any execution workflow
+    let moniBrainContext: any = null;
+    try {
+      const brain = container.resolve<any>('MONIBrain');
+      if (brain) {
+        moniBrainContext = await brain.constructContext(userInput);
+        console.log('[ExecutiveBrain] Integrated persistent brain memory. Project:', moniBrainContext.activeContext.project);
+      }
+    } catch (_) {}
+    
+    // Sprint 6.8 — Enterprise Security Gate
+    try {
+      const securityPolicy = container.resolve<any>('SecurityPolicyManager');
+      const threatEngine = container.resolve<any>('ThreatDetectionEngine');
+      const rbacEnforcer = container.resolve<any>('RbacEnforcer');
+      
+      if (securityPolicy && threatEngine && rbacEnforcer) {
+        // 1. RBAC Check
+        const hasAccess = rbacEnforcer.checkAccess({
+          user: this.userName,
+          role: 'System', // Simulated role for execution
+          permission: { resource: 'workflow', action: 'execute' }
+        });
+
+        if (!hasAccess) {
+          throw new Error('Access Denied: Role lacks required permission to execute workflow.');
+        }
+
+        // 2. Threat Analysis
+        const threatResult = threatEngine.analyze({
+          sourceType: 'command',
+          payload: userInput,
+          context: moniBrainContext
+        });
+
+        if (!threatResult.safe) {
+          const remediationAgent = container.resolve<any>('VulnerabilityRemediationAgent');
+          if (remediationAgent) {
+             console.log('[ExecutiveBrain] Threat detected. Attempting auto-remediation...');
+             const remediated = remediationAgent.remediate({
+               originalPayload: userInput,
+               sourceType: 'command',
+               threats: threatResult.identifiedThreats,
+               violations: []
+             });
+             if (remediated.success) {
+               console.log('[ExecutiveBrain] Payload auto-remediated.');
+               userInput = remediated.remediatedPayload;
+             } else {
+               throw new Error(`Execution Blocked by ThreatDetectionEngine: ${threatResult.identifiedThreats.map((t:any) => t.description).join(', ')}`);
+             }
+          } else {
+            throw new Error(`Execution Blocked by ThreatDetectionEngine: ${threatResult.identifiedThreats.map((t:any) => t.description).join(', ')}`);
+          }
+        }
+
+        // 3. Policy Evaluation
+        const policyResult = securityPolicy.evaluateWorkflow({ user: this.userName, input: userInput });
+        if (!policyResult.passed) {
+          throw new Error(`Execution Blocked by SecurityPolicyManager: ${policyResult.violations.map((v:any) => v.description).join(', ')}`);
+        }
+      }
+    } catch (secError: any) {
+      console.warn('[ExecutiveBrain] Security Interception:', secError.message);
+      onChunk(`[SecOps Intercept] 🛡️ ${secError.message}`);
+      return `[SecOps Intercept] 🛡️ ${secError.message}`;
+    }
+
+    // SecOps command checks
+    const secopsInputLower = userInput.toLowerCase();
+    if (
+      secopsInputLower.includes('run security audit') ||
+      secopsInputLower.includes('check compliance') ||
+      secopsInputLower.includes('simulate threat detection') ||
+      secopsInputLower.includes('view secrets vault') ||
+      secopsInputLower.includes('remediate vulnerabilities') ||
+      secopsInputLower.includes('rbac status')
+    ) {
+      try {
+        if (secopsInputLower.includes('run security audit') || secopsInputLower.includes('check compliance')) {
+          const complianceEngine = container.resolve<any>('ComplianceAuditEngine');
+          const reportEngine = container.resolve<any>('SecurityReportEngine');
+          if (complianceEngine && reportEngine) {
+            const res = complianceEngine.auditWorkflow({
+              workflowId: `wf-${Date.now()}`,
+              dataAccessed: ['email', 'password'],
+              dataLocation: 'EU-West',
+              encryptionActive: true
+            });
+            reportEngine.generateAllReports(complianceEngine.getMetrics());
+            const msg = `[SecOps Center] Compliance Audit Complete.\nStatus: **${res.compliant ? 'COMPLIANT' : 'VIOLATION DETECTED'}**\nSOC2: ${res.frameworkEvaluations.SOC2}\nGDPR: ${res.frameworkEvaluations.GDPR}\nHIPAA: ${res.frameworkEvaluations.HIPAA}\nViolations: ${res.violations.join(', ') || 'None'}`;
+            onChunk(msg);
+            return msg;
+          }
+        }
+        if (secopsInputLower.includes('simulate threat detection')) {
+          const threatEngine = container.resolve<any>('ThreatDetectionEngine');
+          if (threatEngine) {
+             const res = threatEngine.analyze({ sourceType: 'command', payload: 'SELECT * FROM users WHERE id = ${id} && rm -rf /' });
+             const msg = `[SecOps Center] Simulated Threat Analysis.\nSafe: **${res.safe}**\nScore: ${res.threatScore}/100\nDetected Threats: ${res.identifiedThreats.map((t:any) => t.category).join(', ')}`;
+             onChunk(msg);
+             return msg;
+          }
+        }
+        if (secopsInputLower.includes('view secrets vault')) {
+          const vault = container.resolve<any>('SecretsManagementSimulator');
+          if (vault) {
+             const keys = vault.listKeys();
+             const msg = `[SecOps Center] Secrets Vault.\nActive Leases: ${keys.length}\nKeys: ${keys.join(', ')}`;
+             onChunk(msg);
+             return msg;
+          }
+        }
+        if (secopsInputLower.includes('rbac status')) {
+          const rbac = container.resolve<any>('RbacEnforcer');
+          if (rbac) {
+             const m = rbac.getMetrics();
+             const msg = `[SecOps Center] RBAC Status.\nActive Roles: ${m.activeRoles}\nTotal Access Checks: ${m.totalChecks}\nDenied Requests: ${m.deniedAccessCount}`;
+             onChunk(msg);
+             return msg;
+          }
+        }
+      } catch (e: any) {
+         return `[SecOps Error] ${e.message}`;
+      }
+    }
       // Pre-execution autonomous coordination
       try {
         const aee = container.resolve<any>('AutonomousExecutiveEngine');
@@ -321,42 +447,91 @@ export class ExecutiveBrain {
           let workflowResponse = '';
           const lowerVal = userInput.toLowerCase().trim();
           
-          const workflowTriggers = [
-            'beni motive et', 'motive et', 
-            'yürüyüş hatırlat', 'yürüyüş', 
-            'kilomu sor', 'kilo sor', 
-            'ilaçlarımı hatırlat', 'ilaç', 
-            'haftalık rapor', 'cuma',
-            'günlük planımı oku', 'planımı oku'
-          ];
-          
-          const isWorkflowCommand = workflowTriggers.some(t => lowerVal.includes(t)) && 
-                                    (lowerVal.includes('her') || lowerVal.includes('sabah') || lowerVal.includes('akşam') || lowerVal.includes('hafta') || lowerVal.includes('cuma'));
-          
-          if (isWorkflowCommand) {
-            const planned = workflowEngine.createWorkflowFromText(userInput);
-            this.pendingAgentAction = [{
-              tool: 'workflows',
-              params: { action: 'create', text: userInput }
-            }];
-            try {
-              const am = container.resolve<any>('AgentManager');
-              if (am) {
-                am.clearConfirmationPending();
-                am.route(userInput, {
-                  userInput,
-                  conversationContext: null,
-                  lifeSnapshot: lifeModel.getSnapshot(),
-                  memoryFacts: this.longTermMemory.getFacts(),
-                  activeGoals: lifeModel.getProfile().goals.activeGoals,
-                  currentDateTime: new Date().toISOString(),
-                  personalityMode: personalityEngine.getMode(),
-                  source: 'user'
-                });
+          if (
+            lowerVal.startsWith('submit workflow') ||
+            lowerVal.startsWith('execute next workflow') ||
+            lowerVal.startsWith('optimize workflows') ||
+            lowerVal.startsWith('workflow health') ||
+            lowerVal.startsWith('workflow status') ||
+            lowerVal.startsWith('replay workflow') ||
+            lowerVal.startsWith('list templates') ||
+            lowerVal.startsWith('generate workflow reports')
+          ) {
+            if (lowerVal.startsWith('submit workflow')) {
+              const name = userInput.substring('submit workflow'.length).trim() || 'Default Workflow';
+              const wfId = await workflowEngine.submitWorkflow({ id: `wf-${Date.now()}`, name, parameters: {} });
+              workflowResponse = `[Workflow Core] Workflow submitted successfully. ID: **${wfId}**`;
+            } else if (lowerVal.startsWith('execute next workflow')) {
+              await workflowEngine.executeNext();
+              workflowResponse = `[Workflow Core] Executed next workflow in queue. Check history/logs for status.`;
+            } else if (lowerVal.startsWith('optimize workflows')) {
+              const optimizer = container.resolve<any>('WorkflowOptimizationEngine');
+              const suggestions = optimizer ? optimizer.getSuggestions() : [];
+              workflowResponse = `[Workflow Core] Optimization analysis complete.\nSuggestions: ${suggestions.join(', ') || 'No suggestions at this time.'}`;
+            } else if (lowerVal.startsWith('workflow health')) {
+              const healthEngine = container.resolve<any>('WorkflowHealthEngine');
+              const health = healthEngine ? healthEngine.getHealthReport() : { score: 100, active: 0, status: 'Healthy' };
+              workflowResponse = `[Workflow Health] Status: **${health.status}** | Score: ${health.score}% | Active: ${health.active}`;
+            } else if (lowerVal.startsWith('workflow status')) {
+              const stateManager = container.resolve<any>('WorkflowStateManager');
+              const states = stateManager ? stateManager.getAllStates() : {};
+              workflowResponse = `[Workflow Core] States:\n${Object.entries(states).map(([id, state]) => `- ${id}: ${state}`).join('\n') || 'No workflows registered.'}`;
+            } else if (lowerVal.startsWith('replay workflow')) {
+              const id = userInput.substring('replay workflow'.length).trim();
+              workflowResponse = `[Workflow Core] Time-travel replay initiated for Workflow ${id}.`;
+            } else if (lowerVal.startsWith('list templates')) {
+              const templateLibrary = container.resolve<any>('WorkflowTemplateLibrary');
+              const templates = templateLibrary ? templateLibrary.listTemplates() : [];
+              workflowResponse = `[Workflow Core] Available Templates:\n${templates.map((t: any) => `- ${t.name} (v${t.version}): ${t.description}`).join('\n') || 'No templates available.'}`;
+            } else if (lowerVal.startsWith('generate workflow reports')) {
+              const reportEngine = container.resolve<any>('WorkflowReportEngine');
+              const metricsEngine = container.resolve<any>('WorkflowMetrics');
+              const metrics = metricsEngine ? metricsEngine.getMetrics() : {};
+              if (reportEngine) {
+                reportEngine.generateAllReports(metrics);
+                workflowResponse = `[Workflow Core] All 16 workflow reports have been generated in the /reports folder.`;
+              } else {
+                workflowResponse = `[Workflow Core] WorkflowReportEngine could not be resolved from container.`;
               }
-            } catch (err) {}
+            }
+          } else {
+            const workflowTriggers = [
+              'beni motive et', 'motive et', 
+              'yürüyüş hatırlat', 'yürüyüş', 
+              'kilomu sor', 'kilo sor', 
+              'ilaçlarımı hatırlat', 'ilaç', 
+              'haftalık rapor', 'cuma',
+              'günlük planımı oku', 'planımı oku'
+            ];
             
-            workflowResponse = `"${planned.title}" isimli otomatik iş akışını (Tetikleyici: ${planned.trigger.type}) oluşturmamı onaylıyor musunuz?`;
+            const isWorkflowCommand = workflowTriggers.some(t => lowerVal.includes(t)) && 
+                                      (lowerVal.includes('her') || lowerVal.includes('sabah') || lowerVal.includes('akşam') || lowerVal.includes('hafta') || lowerVal.includes('cuma'));
+            
+            if (isWorkflowCommand) {
+              const planned = workflowEngine.createWorkflowFromText(userInput);
+              this.pendingAgentAction = [{
+                tool: 'workflows',
+                params: { action: 'create', text: userInput }
+              }];
+              try {
+                const am = container.resolve<any>('AgentManager');
+                if (am) {
+                  am.clearConfirmationPending();
+                  am.route(userInput, {
+                    userInput,
+                    conversationContext: null,
+                    lifeSnapshot: lifeModel.getSnapshot(),
+                    memoryFacts: this.longTermMemory.getFacts(),
+                    activeGoals: lifeModel.getProfile().goals.activeGoals,
+                    currentDateTime: new Date().toISOString(),
+                    personalityMode: personalityEngine.getMode(),
+                    source: 'user'
+                  });
+                }
+              } catch (err) {}
+              
+              workflowResponse = `"${planned.title}" isimli otomatik iş akışını (Tetikleyici: ${planned.trigger.type}) oluşturmamı onaylıyor musunuz?`;
+            }
           }
 
           pipelineTracer.traceStep('Workflow', 'completed');

@@ -46,3 +46,9 @@ credentials.json
 # Zip backups & secret directories
 backups/*.zip
 secrets/
+
+# Local scratch scripts and design exports
+scratch/
+backups/
+ArchitectureIndex.json
+ArchitectureSnapshot.json
