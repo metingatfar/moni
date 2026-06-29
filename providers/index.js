@@ -1,8 +1,10 @@
 import * as gemini from './gemini.js';
 import * as groq from './groq.js';
+import * as openai from './openai.js';
 
 const providers = {
     gemini,
+    openai,
     groq
 };
 

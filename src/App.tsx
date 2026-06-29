@@ -1,8 +1,8 @@
-import { MoniDashboard } from './presentation/MoniDashboard'
+import { AppShell } from './presentation/ui5/AppShell'
 
 function App() {
   return (
-    <MoniDashboard />
+    <AppShell />
   )
 }
 

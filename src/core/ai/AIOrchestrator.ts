@@ -277,10 +277,26 @@ export class AIOrchestrator {
     if (!response.ok) {
       const errText = await response.text().catch(() => 'No error body');
       console.error(`[AIOrchestrator] Stream fetch failed: ${response.status} - ${errText}`);
+      
+      let cleanErrorMessage = `Sunucu hatası (${response.status})`;
+      try {
+        if (errText.trim().startsWith('{')) {
+          const parsed = JSON.parse(errText);
+          const rawMsg = parsed.error?.message || parsed.message || JSON.stringify(parsed);
+          cleanErrorMessage = `Sağlayıcı Hatası: ${rawMsg}`;
+        } else {
+          cleanErrorMessage = errText;
+        }
+      } catch (_) {
+        cleanErrorMessage = errText;
+      }
+
       if (response.status === 429 || errText.includes('429') || errText.toLowerCase().includes('quota') || errText.toLowerCase().includes('limit exceeded') || errText.toLowerCase().includes('rate limit')) {
         this.handle429(provider, errText);
+        cleanErrorMessage = "Yapay zeka limit aşımına (429 Rate Limit) ulaştı. Lütfen daha sonra tekrar deneyin veya başka bir sağlayıcı seçin.";
       }
-      throw new Error(`Stream HTTP Error ${response.status}: ${errText}`);
+
+      throw new Error(cleanErrorMessage);
     }
 
     if (!response.body) {

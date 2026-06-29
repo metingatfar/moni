@@ -1,14 +1,16 @@
-# MONI 2.0 Premium Reusable Component Library
+# MONI UI 5.0 Component Library
 
-## 1. MoniAvatar
-* Animated SVG Robot and radial-gradient glass Orb.
-* CSS keyframes for floating, breathing, listening, thinking, speaking, and offline states.
+Summary of MDL components developed to facilitate rapid views design:
 
-## 2. Glass Cards & Buttons
-* `.glass-panel`: Backdrop blur surface.
-* `.btn-primary`: Radiant cyan to purple gradients.
-* `.btn-secondary`: Translucent white borders.
-* `.btn-danger`: Muted red overlay transitions.
+## Core Components
 
-## 3. Modulator Controls
-* Translucent inputs, range sliders, and active status selector dropdowns.
+- **GlassCard**: visionOS-inspired dark container cards featuring blurred backdrops.
+- **GlassButton**: Stylized interactive button with subtle scale transformations on hover.
+- **GlassInput**: Input field with purple glow outline when active.
+- **Avatar**: Glowing indicator frame supporting user profile picture initials.
+- **Orb**: State-aware vector component reflecting speaking, thinking, or warning states.
+- **ProgressRing**: SVG circular progress widget used for todo indicators.
+- **ProviderBadge**: Active AI engine state tracker (Gemini, OpenAI, Groq, Local).
+- **StatusDot**: Color-coded connectivity status badge.
+- **SectionTitle**: MDL title header.
+- **Dock**: Collapsible action tray.

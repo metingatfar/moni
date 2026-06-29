@@ -71,7 +71,7 @@ export class LifeModel {
         workflowEngine = container.resolve<any>('WorkflowEngine');
       } catch (err) {}
 
-      if (workflowEngine) {
+      if (workflowEngine && typeof workflowEngine.getDiagnostics === 'function') {
         const diag = workflowEngine.getDiagnostics();
         this.metrics.consistencyScore = diag.workflowSuccessRate;
       }

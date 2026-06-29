@@ -206,6 +206,49 @@ export class MoniIntelligenceEngine {
     return suggestions;
   }
 
+  // --- LOCAL FALLBACK RESPONSE ENGINE ---
+  public getLocalResponse(message: string, isEnglish: boolean): string | null {
+    const text = message.toLowerCase().trim();
+    
+    const trGreetings = ['merhaba', 'selam', 'hey', 'günaydın', 'tünaydın', 'iyi günler'];
+    const enGreetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening'];
+    
+    const isTrGreet = trGreetings.some(g => text === g || text.startsWith(g + ' ') || text.endsWith(' ' + g));
+    const isEnGreet = enGreetings.some(g => text === g || text.startsWith(g + ' ') || text.endsWith(' ' + g));
+    
+    if (isTrGreet || isEnGreet) {
+      return isEnglish
+        ? "Hello! How can I assist you today? I am MONI, your personal AI workspace companion."
+        : "Merhaba! Size nasıl yardımcı olabilirim? Ben MONI, kişisel yapay zeka çalışma arkadaşınızım.";
+    }
+    
+    if (text.includes('sen kimsin') || text.includes('kendini tanıt') || text.includes('who are you') || text.includes('introduce yourself')) {
+      return isEnglish
+        ? "Hello, I am MONI AI Operating System, your personal AI workspace companion. I can chat, remember context, assist with projects, manage workflows, generate reports, and help you work more efficiently."
+        : "Merhaba, ben MONI AI Operating System. Metin GATFAR tarafından tasarlanmış kişisel yapay zeka çalışma arkadaşınım. Sohbet edebilir, sesli komutları anlayabilir, hafıza tutabilir, projelerini yönetebilir, rapor hazırlayabilir, workflow süreçlerini takip edebilir ve çalışma alanında sana yardımcı olabilirim.";
+    }
+    
+    if (text.includes('özelliklerin neler') || text.includes('ne yapabilirsin') || text.includes('what are your features') || text.includes('what can you do')) {
+      return isEnglish
+        ? "I can manage your tasks, modulate voice outputs, log activity timelines, handle context-aware settings, and compile morning briefs locally."
+        : "Sohbet edebilir, sesli komutları anlayabilir, hafıza tutabilir, projelerinizi yönetebilir, rapor hazırlayabilir ve workflow süreçlerini takip edebilirim.";
+    }
+    
+    if (text.includes('moni nedir') || text.includes('what is moni')) {
+      return isEnglish
+        ? "Hello, I am MONI AI Operating System, your personal AI workspace companion. I can chat, remember context, assist with projects, manage workflows, generate reports, and help you work more efficiently."
+        : "Merhaba, ben MONI AI Operating System. Metin GATFAR tarafından tasarlanmış kişisel yapay zeka çalışma arkadaşınım. Sohbet edebilir, sesli komutları anlayabilir, hafıza tutabilir, projelerini yönetebilir, rapor hazırlayabilir, workflow süreçlerini takip edebilir ve çalışma alanında sana yardımcı olabilirim.";
+    }
+    
+    if (text.includes('help') || text.includes('yardım')) {
+      return isEnglish
+        ? "You can view the system dashboard, inspect custom memories, open help FAQ pages, or configure proactive settings."
+        : "Komut paletini açmak için Ctrl+K tuşlarına basabilir, yardım sekmelerini inceleyebilir ya da ayarlardan proaktif önerileri kişiselleştirebilirsiniz.";
+    }
+    
+    return null;
+  }
+
   // --- WORKSPACE INSIGHTS & PRODUCTIVITY ---
   public getProductivityInsights(taskList: any[] = [], memories: any[] = []): WorkspaceInsights {
     const completedTasks = taskList.filter((t: any) => t.isCompleted).length;
