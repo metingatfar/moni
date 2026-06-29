@@ -3,8 +3,8 @@ import React, { createContext, useContext } from 'react';
 export interface ChatContextType {
   messages: any[];
   setMessages: React.Dispatch<React.SetStateAction<any[]>>;
-  moniStatus: 'idle' | 'listening' | 'thinking' | 'speaking';
-  setMoniStatus: (status: 'idle' | 'listening' | 'thinking' | 'speaking') => void;
+  moniStatus: 'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'success' | 'error' | 'offline';
+  setMoniStatus: (status: 'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'success' | 'error' | 'offline') => void;
   avatarMood: 'thinking' | 'neutral' | 'happy' | 'focused' | 'alert';
   setAvatarMood: (mood: 'thinking' | 'neutral' | 'happy' | 'focused' | 'alert') => void;
   currentlySpeakingMsgId: string | null;

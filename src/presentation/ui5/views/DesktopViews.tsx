@@ -5,7 +5,7 @@ import { colors } from '../tokens/colors';
 import { GlassCard, GlassButton, GlassInput, EmptyState } from '../components/GlassComponents';
 import { MetricCard, SectionTitle, InfoCard } from '../components/Indicators';
 import { TypingIndicator, SuggestionChip } from '../components/ChatComponents';
-import { Orb } from '../components/Orb';
+import { MoniAvatar } from '../components/MoniAvatar';
 import { databaseService } from '../../../data/db/LocalDatabase';
 import { VoiceService } from '../../../data/services/VoiceService';
 
@@ -255,7 +255,7 @@ export const ChatView: React.FC = () => {
           {messages.length === 0 ? (
             /* Empty Chat Premium Welcome Dashboard */
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '20px', textAlign: 'center', padding: '20px' }}>
-              <Orb state={moniStatus} size={110} />
+              <MoniAvatar state={moniStatus} size={120} />
               <div>
                 <h2 style={{ margin: '0 0 6px 0', fontSize: '1.2rem', color: '#fff' }}>Merhaba Metin!</h2>
                 <p style={{ margin: 0, fontSize: '0.82rem', color: colors.text.secondary, maxWidth: '380px' }}>
@@ -539,6 +539,16 @@ export const SettingsView: React.FC = () => {
   return (
     <GlassCard style={{ maxWidth: '600px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <SectionTitle title="MONI Ayarları" />
+
+      {/* MONI Official Identity branding area */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: `1px solid ${colors.border.glass}` }}>
+        <MoniAvatar state="idle" size={70} />
+        <div>
+          <div style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>MONI AI Asistan</div>
+          <div style={{ fontSize: '0.74rem', color: colors.text.secondary }}>Yaş: 25-30 | Dijital Kimlik: Aktif</div>
+          <div style={{ fontSize: '0.72rem', color: colors.text.muted, marginTop: '2px' }}>Zeki, profesyonel, samimi ve güler yüzlü çalışma alanı yöneticiniz.</div>
+        </div>
+      </div>
 
       {/* AI Provider selector */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

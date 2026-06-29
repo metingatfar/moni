@@ -6,7 +6,7 @@ import { useLayout } from '../providers/LayoutProvider';
 import { colors } from '../tokens/colors';
 import { GlassButton, GlassInput } from './GlassComponents';
 import { Avatar, ProgressRing } from './Indicators';
-import { Orb } from './Orb';
+import { MoniAvatar } from './MoniAvatar';
 import { providerHealthMonitor } from '../../../core/knowledge/ProviderHealthMonitor';
 import { databaseService } from '../../../data/db/LocalDatabase';
 
@@ -158,12 +158,12 @@ export const Sidebar: React.FC = () => {
         })}
       </div>
 
-      {/* Center Orb Card */}
+      {/* Center Avatar Card */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.01)', padding: '12px', borderRadius: '14px', border: `1px solid ${colors.border.glass}` }}>
-        <Orb state={moniStatus} size={isSidebarCollapsed ? 36 : 60} />
+        <MoniAvatar state={moniStatus} size={isSidebarCollapsed ? 36 : 56} />
         {!isSidebarCollapsed && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-            <span style={{ fontSize: '0.7rem', color: '#fff', fontWeight: 700 }}>MONI Orb</span>
+            <span style={{ fontSize: '0.7rem', color: '#fff', fontWeight: 700 }}>MONI</span>
             <span style={{ fontSize: '0.62rem', color: colors.accent.cyan, textTransform: 'uppercase' }}>{moniStatus}</span>
           </div>
         )}
@@ -244,6 +244,11 @@ export const AssistantPanel: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
       
+      {/* Large Assistant Avatar Header */}
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 12px 12px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.15)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}>
+        <MoniAvatar state={moniStatus} size={150} />
+      </div>
+
       {/* 1. Header Tab Strip */}
       <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)', overflowX: 'auto', background: 'rgba(0,0,0,0.1)' }}>
         {tabs.map(t => {
@@ -358,7 +363,7 @@ export const AssistantPanel: React.FC = () => {
             
             <div style={{ background: 'rgba(255,255,255,0.01)', border: `1px solid ${colors.border.glass}`, borderRadius: '10px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.74rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: colors.text.secondary }}>Sistem Sesi:</span>
+                <span style={{ color: colors.text.secondary }}>Seçilen Ses:</span>
                 <span style={{ fontWeight: 600, color: '#fff' }}>{selectedSystemVoiceName}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>

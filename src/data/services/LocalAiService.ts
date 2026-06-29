@@ -68,13 +68,23 @@ export class LocalAiService implements AiRepository {
 
     let baseResponse = '';
     if (inputLower.includes('hava') || inputLower.includes('durum')) {
-      baseResponse = 'Bugün hava güneşli ve sıcaklık yirmi beş derece civarında.';
+      baseResponse = 'Bugün hava güneşli ve sıcaklık yirmi beş derece civarında, Metin.';
     } else if (inputLower.includes('nasılsın') || inputLower.includes('nasıl gidiyor')) {
-      baseResponse = 'Çok iyiyim, teşekkürler. Size hizmet etmek için hazırım.';
+      baseResponse = 'İyiyim Metin, teşekkür ederim. Sen nasılsın?';
     } else if (inputLower.includes('kimsin') || inputLower.includes('adın ne')) {
-      baseResponse = 'Ben sizin için özelleştirilmiş akıllı asistan ve özel kalem sistemi MONIyim.';
+      baseResponse = 'Ben MONI, senin kişisel yapay zeka çalışma arkadaşınım Metin.';
+    } else if (inputLower.includes('merhaba') || inputLower.includes('selam')) {
+      baseResponse = 'Merhaba Metin, buradayım. Bugün nasıl yardımcı olayım?';
+    } else if (inputLower.includes('beni duyuyor musun')) {
+      baseResponse = 'Evet Metin, seni gayet net duyuyorum. Dinlemedeyim.';
+    } else if (inputLower.includes('konuşuyor musun') || inputLower.includes('konusuyor musun')) {
+      baseResponse = 'Evet Metin, seninle sesli olarak konuşabiliyorum.';
+    } else if (inputLower.includes('devam et')) {
+      baseResponse = 'Tamamdır Metin, dinliyorum, devam et lütfen.';
+    } else if (inputLower.includes('yardım et') || inputLower.includes('yardim et')) {
+      baseResponse = 'Tabii Metin, ne konuda yardıma ihtiyacın var? Birlikte çözelim.';
     } else {
-      baseResponse = `Talebinizle ilgileniyorum. "${lastUserMessage}" konusu hakkında başka yapmamı istediğiniz bir şey var mı?`;
+      baseResponse = `Tabii Metin, anlatıyorum. "${lastUserMessage}" konusu hakkında başka yapmamı istediğiniz bir şey var mı?`;
     }
 
     if (useOfflineMode) {

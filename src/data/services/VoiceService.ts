@@ -268,19 +268,34 @@ export class VoiceService {
       });
     }
 
-    const trVoice = voices.find(v => {
+    const trVoices = voices.filter(v => {
       const name = v.name.toLowerCase();
       const lang = v.lang.toLowerCase();
       return (
         lang.includes('tr') ||
         name.includes('turkish') ||
-        name.includes('türkçe') ||
-        name.includes('google türkçe') ||
-        name.includes('microsoft turkish')
+        name.includes('türkçe')
       );
     });
 
-    const selected = trVoice || voices[0] || null;
+    let selected: SpeechSynthesisVoice | null = null;
+    
+    if (trVoices.length > 0) {
+      selected = trVoices.find(v => v.name.toLowerCase().includes('selin')) || null;
+      if (!selected) selected = trVoices.find(v => v.name.toLowerCase().includes('zeynep')) || null;
+      if (!selected) selected = trVoices.find(v => v.name.toLowerCase().includes('emel')) || null;
+      if (!selected) selected = trVoices.find(v => v.name.toLowerCase().includes('google')) || null;
+      if (!selected) selected = trVoices.find(v => !v.name.toLowerCase().includes('tolga')) || null;
+      if (!selected) selected = trVoices[0];
+    }
+
+    if (!selected && voices.length > 0) {
+      selected = voices.find(v => {
+        const name = v.name.toLowerCase();
+        return name.includes('female') || name.includes('zira') || name.includes('susan') || name.includes('hazel');
+      }) || voices[0];
+    }
+
     if (selected) {
       console.log('BROWSER_TTS_SELECTED_VOICE', selected.name);
     } else {
@@ -353,9 +368,9 @@ export class VoiceService {
       }
 
       utterance.lang = "tr-TR";
-      utterance.rate = 0.95;
-      utterance.pitch = 1;
-      utterance.volume = 1;
+      utterance.rate = options?.rate !== undefined ? options.rate : 0.95;
+      utterance.pitch = 1.08;
+      utterance.volume = options?.volume !== undefined ? options.volume : 1.0;
 
       utterance.onstart = () => {
         console.log('BROWSER_TTS_START');

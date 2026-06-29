@@ -5,7 +5,7 @@ import { ChatContext } from './ChatContext';
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [messages, setMessages] = useState<any[]>([]);
-  const [moniStatus, setMoniStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [moniStatus, setMoniStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'success' | 'error' | 'offline'>('idle');
   const [avatarMood, setAvatarMood] = useState<'thinking' | 'neutral' | 'happy' | 'focused' | 'alert'>('neutral');
   const [currentlySpeakingMsgId, setCurrentlySpeakingMsgId] = useState<string | null>(null);
   
@@ -33,13 +33,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = moniRuntime.subscribe((state) => {
       setCurrentlySpeakingMsgId(state.isSpeaking ? 'active-synthesis' : null);
       
-      const mappedStatus = state.orbState === 'warning' ? 'idle' : (state.orbState as any);
-      setMoniStatus(mappedStatus);
+      setMoniStatus(state.orbState);
       
       let mood: 'thinking' | 'neutral' | 'happy' | 'focused' | 'alert' = 'neutral';
       if (state.orbState === 'thinking') mood = 'thinking';
       else if (state.orbState === 'speaking') mood = 'happy';
-      else if (state.orbState === 'warning') mood = 'alert';
+      else if (state.orbState === 'error') mood = 'alert';
       setAvatarMood(mood);
       
       setSelectedProviderName(state.activeProvider);

@@ -3,7 +3,7 @@ import { useChat } from '../providers/ChatContext';
 import { useWorkspace } from '../providers/WorkspaceProvider';
 import { colors } from '../tokens/colors';
 import { GlassCard, GlassButton, GlassInput, EmptyState } from '../components/GlassComponents';
-import { Orb } from '../components/Orb';
+import { MoniAvatar } from '../components/MoniAvatar';
 import { TypingIndicator } from '../components/ChatComponents';
 import { databaseService } from '../../../data/db/LocalDatabase';
 
@@ -38,9 +38,9 @@ export const MobileHome: React.FC<{ onNavigate: (view: string) => void }> = ({ o
         <span style={{ fontSize: '0.74rem', color: colors.text.secondary }}>Sesli asistanı açmak için Orb'a dokunun.</span>
       </div>
 
-      {/* 3. Large Animated Orb */}
+      {/* 3. Large Animated Avatar */}
       <div style={{ display: 'flex', justifyContent: 'center', margin: '14px 0' }}>
-        <Orb state={moniStatus} size={130} onClick={() => onNavigate('voice')} />
+        <MoniAvatar state={moniStatus} size={130} onClick={() => onNavigate('voice')} />
       </div>
 
       {/* 4. Executive strip cards */}
@@ -180,8 +180,8 @@ export const MobileVoice: React.FC<{ onNavigate: (view: string) => void }> = ({ 
         {moniStatus === 'listening' ? 'Dinleniyor...' : moniStatus === 'thinking' ? 'Düşünülüyor...' : 'Sesli Mod Hazır'}
       </div>
 
-      {/* Center Orb */}
-      <Orb state={moniStatus} size={160} />
+      {/* Center Avatar */}
+      <MoniAvatar state={moniStatus} size={160} />
 
       {/* Wave animation */}
       <div style={{ display: 'flex', gap: '4px', height: '24px', alignItems: 'center' }}>
@@ -374,6 +374,15 @@ export const MobileSettings: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
       <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#fff' }}>Ayarlar</h3>
+
+      {/* MONI Identity Branding */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px', background: 'rgba(255,255,255,0.02)', borderRadius: '10px', border: `1px solid ${colors.border.glass}` }}>
+        <MoniAvatar state="idle" size={50} />
+        <div>
+          <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#fff' }}>MONI AI Asistan</div>
+          <div style={{ fontSize: '0.68rem', color: colors.text.secondary }}>Yaş: 25-30 | Dijital Kimlik: Aktif</div>
+        </div>
+      </div>
       
       <GlassCard style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '12px' }}>
         
@@ -426,6 +435,9 @@ export const MobileSettings: React.FC = () => {
             <option value="Selin">Selin (Türkçe)</option>
             <option value="David">David (English)</option>
           </select>
+          <div style={{ fontSize: '0.64rem', color: colors.text.secondary, marginTop: '4px' }}>
+            Seçilen Ses: {selectedSystemVoiceName}
+          </div>
         </div>
 
         {/* Clear Chat History */}

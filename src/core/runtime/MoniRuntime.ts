@@ -10,8 +10,8 @@ import { knowledgeCore } from '../knowledge/KnowledgeCore';
 import { providerHealthMonitor } from '../knowledge/ProviderHealthMonitor';
 
 export type RuntimeState = 'IDLE' | 'WAITING_WAKE' | 'WAKE_DETECTED' | 'GREETING' | 'WAITING_COMMAND' | 'PROCESSING' | 'PROVIDER' | 'MEMORY' | 'TTS';
-export type OrbState = 'idle' | 'speaking' | 'listening' | 'thinking' | 'warning';
-export type WakeStatus = 'Idle' | 'Starting' | 'Listening' | 'Paused (TTS)' | 'Processing' | 'Restarting' | 'Error' | 'Detected';
+export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'success' | 'error' | 'offline';
+export type WakeStatus = 'Idle' | 'Starting' | 'Listening' | 'Seni dinliyorum...' | 'Paused (TTS)' | 'Processing' | 'Restarting' | 'Error' | 'Detected';
 export type MicPermission = 'Granted' | 'Denied' | 'Prompt' | 'Unknown';
 
 export interface RuntimeStateData {
@@ -155,6 +155,13 @@ export class MoniRuntime {
     };
   }
 
+  private getEffectiveOrbState(): OrbState {
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+      return 'offline';
+    }
+    return this.orbState;
+  }
+
   private notify() {
     const state = this.getState();
     this.listeners.forEach(l => l(state));
@@ -163,7 +170,7 @@ export class MoniRuntime {
   public getState(): RuntimeStateData {
     return {
       runtimeState: this.runtimeState,
-      orbState: this.orbState,
+      orbState: this.getEffectiveOrbState(),
       wakeStatus: this.wakeStatus,
       micPermission: this.micPermission,
       lastTranscript: this.lastTranscript,
@@ -292,7 +299,7 @@ export class MoniRuntime {
     this.isStartingOrRunning = true;
     this.runtimeState = 'WAITING_WAKE';
     this.wakeStatus = 'Starting';
-    this.orbState = 'listening';
+    this.orbState = 'idle';
     this.notify();
 
     // Enforce mic permission and capture constraints
@@ -388,7 +395,7 @@ export class MoniRuntime {
     this.destroyRecognition();
     this.isStartingOrRunning = true;
     this.runtimeState = 'WAITING_COMMAND';
-    this.wakeStatus = 'Starting';
+    this.wakeStatus = 'Seni dinliyorum...';
     this.orbState = 'listening';
     this.notify();
 
@@ -399,7 +406,7 @@ export class MoniRuntime {
       }
       this.commandTimeoutTimer = setTimeout(() => {
         this.handleCommandTimeout();
-      }, 10000);
+      }, 20000);
     }
 
     const granted = await this.checkMicPermission();
@@ -410,13 +417,13 @@ export class MoniRuntime {
       return;
     }
 
-    this.wakeStatus = 'Listening';
+    this.wakeStatus = 'Seni dinliyorum...';
     this.notify();
 
     console.log('VOICE_ENGINE_CREATE_RECOGNITION_COMMAND');
     const rec = new SpeechRecognition();
     rec.continuous = false;
-    rec.interimResults = false;
+    rec.interimResults = true;
     rec.lang = this.currentLanguage === 'tr' ? 'tr-TR' : 'en-US';
 
     rec.onstart = () => {
@@ -426,22 +433,35 @@ export class MoniRuntime {
     };
 
     rec.onresult = async (event: any) => {
-      const transcript = event.results[0][0].transcript.trim();
-      console.log('RUNTIME_COMMAND_TRANSCRIPT_RAW', transcript);
+      const lastResultIndex = event.resultIndex;
+      const result = event.results[lastResultIndex];
+      const transcript = result[0].transcript.trim();
+      console.log('RUNTIME_COMMAND_TRANSCRIPT_RAW', transcript, 'isFinal:', result.isFinal);
+      
       this.lastTranscript = transcript;
       this.notify();
 
-      if (transcript.length <= 1 || this.isSelfAudio(transcript)) {
-        console.log('VOICE_ENGINE_COMMAND_REJECTED_SELF_AUDIO');
-        this.selfAudioIgnoredCount++;
-        this.notify();
-        return;
+      // Extend listening timeout since user has started/is actively speaking
+      if (this.commandTimeoutTimer) {
+        clearTimeout(this.commandTimeoutTimer);
+        this.commandTimeoutTimer = setTimeout(() => {
+          this.handleCommandTimeout();
+        }, 20000);
       }
 
-      console.log('VOICE_ENGINE_COMMAND_ACCEPTED');
-      this.destroyRecognition();
-      console.log('RUNTIME_COMMAND_SEND_MESSAGE');
-      await this.sendMessage(transcript, 'voice');
+      if (result.isFinal) {
+        if (transcript.length <= 1 || this.isSelfAudio(transcript)) {
+          console.log('VOICE_ENGINE_COMMAND_REJECTED_SELF_AUDIO');
+          this.selfAudioIgnoredCount++;
+          this.notify();
+          return;
+        }
+
+        console.log('VOICE_ENGINE_COMMAND_ACCEPTED');
+        this.destroyRecognition();
+        console.log('RUNTIME_COMMAND_SEND_MESSAGE');
+        await this.sendMessage(transcript, 'voice');
+      }
     };
 
     rec.onerror = (event: any) => {
@@ -491,6 +511,7 @@ export class MoniRuntime {
   private handleWakeDetected(rawText: string) {
     console.log('[MoniRuntime] Wake word detected. Raw transcript:', rawText);
     this.runtimeState = 'WAKE_DETECTED';
+    this.orbState = 'listening';
     this.wakeStatus = 'Detected';
     this.destroyRecognition();
 
@@ -595,7 +616,7 @@ export class MoniRuntime {
     console.log('VOICE_ENGINE_SILENCE_COOLDOWN_START');
     
     const startCooldownTime = Date.now();
-    const minCooldownDuration = 1000;
+    const minCooldownDuration = 1500;
     
     const checkSpeakingAndRestart = () => {
       const elapsed = Date.now() - startCooldownTime;
@@ -1053,6 +1074,12 @@ export class MoniRuntime {
   private isSelfAudio(transcript: string): boolean {
     const now = Date.now();
     const cleanT = this.cleanString(this.normalizeTranscript(transcript));
+
+    const allowedShortCommands = ['merhaba', 'nasilsin', 'nasilsiniz', 'devam et', 'anlat', 'tamam'];
+    if (allowedShortCommands.includes(cleanT)) {
+      console.log('BYPASS_SELF_AUDIO_CHECK_FOR_NATURAL_SHORT_COMMAND:', cleanT);
+      return false;
+    }
 
     // 1. Cooldown check
     if (now - this.ttsEndedAt < 1500) {
